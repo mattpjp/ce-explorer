@@ -152,11 +152,15 @@ select:focus { outline: none; border-color: var(--ink); }
 
 /* ── SECTOR TABS ─────────────────────────────────────────────── */
 .sector-bar {
-  display: flex; gap: 4px; flex-wrap: wrap;
+  display: flex; gap: 4px; flex-wrap: nowrap;
   padding: 8px 20px;
   border-bottom: 1px solid var(--border);
   align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.sector-bar::-webkit-scrollbar { display: none; }
 .sec-lbl {
   font-size: 8px; text-transform: uppercase;
   letter-spacing: 0.12em; color: var(--ink3);
@@ -206,6 +210,7 @@ select:focus { outline: none; border-color: var(--ink); }
   grid-template-columns: 1fr 30px 1fr 30px 1fr 1px 180px;
   flex: 1;
   min-height: 0;
+  height: 0; /* forces flex child to fill remaining space */
 }
 
 .col-panel {
@@ -780,16 +785,54 @@ function getCountryName(code) {
 }
 
 // =============================================================================
+// DISPLAY SCALE CORRECTIONS
+// Applied client-side — pipeline stored raw values, these bring them to display units.
+// =============================================================================
+
+const DISPLAY = {
+  // id: { divisor, unit }
+  // Divisors correct for raw pipeline output values:
+  // GHG stored in kg CO₂eq (pipeline scale=1e-6 not applied) → /1e6 = Mt
+  // MAT already in Mt (pipeline scale=1e-6 applied correctly)
+  // LAND stored in m² (pipeline scale=1.0) → /1e10 = Mha
+  // ECO_TOX/ECO_ACID stored in PDF·m²·yr (pipeline scale=1.0) → /1e9 for display
+  // WAT_GREEN/WAT_BLUE already in Mm³ (pipeline scale=1e-6 applied correctly)
+  // PM stored in kg PM2.5eq (pipeline scale=1.0) → /1e6 = t PM2.5eq
+  GHG:      { div: 1e6,  unit: 'Mt CO\u2082eq' },
+  MAT:      { div: 1,    unit: 'Mt' },
+  LAND:     { div: 1e10, unit: 'Mha' },
+  ECO_TOX:  { div: 1e9,  unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
+  ECO_ACID: { div: 1e9,  unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
+  WAT_GREEN:{ div: 1,    unit: 'Mm\u00b3' },
+  WAT_BLUE: { div: 1,    unit: 'Mm\u00b3' },
+  PM:       { div: 1e6,  unit: 't PM2.5eq' },
+};
+
+function applyScale(v, indId) {
+  const d = DISPLAY[indId];
+  if (!d || !v) return v;
+  return v / d.div;
+}
+
+function displayUnit(indId) {
+  return DISPLAY[indId]?.unit || '';
+}
+
+// =============================================================================
 // FORMAT NUMBERS
 // =============================================================================
 
-function fmtVal(v, unit) {
+function fmtVal(v) {
   if (v === undefined || v === null) return '—';
-  if (v >= 1000) return (v/1000).toFixed(1) + 'k';
-  if (v >= 100)  return Math.round(v).toString();
-  if (v >= 10)   return v.toFixed(1);
-  if (v >= 1)    return v.toFixed(2);
-  return v.toFixed(3);
+  const abs = Math.abs(v);
+  if (abs >= 1e9)  return (v / 1e9).toFixed(2) + ' G';
+  if (abs >= 1e6)  return (v / 1e6).toFixed(2) + ' M';
+  if (abs >= 1e3)  return v.toLocaleString('en-US', { maximumFractionDigits: 1 });
+  if (abs >= 100)  return Math.round(v).toString();
+  if (abs >= 10)   return v.toFixed(1);
+  if (abs >= 1)    return v.toFixed(2);
+  if (abs >= 0.01) return v.toFixed(3);
+  return v.toExponential(2);
 }
 
 // =============================================================================
@@ -838,11 +881,12 @@ function renderSectorBar() {
 }
 
 function renderMetrics(secData, indMeta, col) {
-  const unit = secData.unit || indMeta?.unit || '';
+  const unit = displayUnit(S.indicator);
+  const scaledTotal = applyScale(secData.total, S.indicator);
   document.getElementById('metrics').innerHTML = `
     <div class="metric">
       <div class="metric-lbl">${indMeta?.label||S.indicator}</div>
-      <div class="metric-val" style="color:${col}">${fmtVal(secData.total)} <span class="metric-unit">${unit}</span></div>
+      <div class="metric-val" style="color:${col}">${fmtVal(scaledTotal)} <span class="metric-unit">${unit}</span></div>
     </div>
     <div class="metric">
       <div class="metric-lbl">Direct (on-site)</div>
@@ -866,8 +910,8 @@ function renderCenter(secData, indMeta, col, countryName) {
   document.getElementById('center-node').style.color = col;
   document.getElementById('cn-country').textContent  = countryName || S.country;
   document.getElementById('cn-sector').textContent   = S.sector;
-  document.getElementById('cn-total').textContent    = fmtVal(secData.total);
-  document.getElementById('cn-unit').textContent     = secData.unit || indMeta?.unit || '';
+  document.getElementById('cn-total').textContent    = fmtVal(applyScale(secData.total, S.indicator));
+  document.getElementById('cn-unit').textContent     = displayUnit(S.indicator);
 
   // Direct % arc
   const svg = document.getElementById('direct-arc');
@@ -905,14 +949,17 @@ function renderFlows(secData, col) {
 function renderNodeList(containerId, shown, other, col, producingCountry, totalImpact) {
   const el = document.getElementById(containerId);
   const maxVal = shown.length > 0 ? shown[0].val : 1;
+  const div    = DISPLAY[S.indicator]?.div || 1;
 
   el.innerHTML = shown.map((f, i) => {
     const isDom  = f.ctry === producingCountry;
     const barPct = Math.round(f.val / maxVal * 100);
     const domStyle = isDom ? `border-left-color:${col};` : '';
+    const scaledVal = fmtVal(f.val / div);
+    const unit = displayUnit(S.indicator);
     return `<div class="flow-node${isDom?' domestic':''}"
       style="${domStyle}"
-      onmouseenter="showTip(event,'${escQ(f.label)}','${escQ(f.sub||'')}',${f.val.toFixed(4)},'${f.pct.toFixed(1)}%')"
+      onmouseenter="showTip(event,'${escQ(f.label)}','${escQ(f.sub||'')}','${scaledVal} ${unit}','${f.pct.toFixed(1)}%')"
       onmouseleave="hideTip()">
       <div class="flow-node-labels">
         <div class="flow-node-main">${f.label}</div>
@@ -1027,7 +1074,7 @@ function renderFootnote(secData, indMeta) {
   const viewLbl = { mixed:'top destinations', country:'by country', sector:'by sector' };
   document.getElementById('footnote').textContent =
     `Production perspective · ${getCountryName(S.country)} — ${S.sector} · ` +
-    `${indMeta?.label||S.indicator} (${secData.unit||indMeta?.unit||''}) · ` +
+    `${indMeta?.label||S.indicator} (${displayUnit(S.indicator)}) · ` +
     `Upstream: ${viewLbl[S.leftView]} · Downstream: ${viewLbl[S.rightView]} · ` +
     `Direct share ${secData.direct_pct}% (arc in center node) · ` +
     `EXIOBASE v3.8.3 pxp 2022 · Ecosystem quality: EcoIndicator 99 Hierarchist (H.A) · ` +
@@ -1038,10 +1085,10 @@ function renderFootnote(secData, indMeta) {
 // TOOLTIP
 // =============================================================================
 
-function showTip(e, title, sub, val, pct) {
+function showTip(e, title, sub, valStr, pct) {
   const tt = document.getElementById('tooltip');
   document.getElementById('tt-title').textContent = title + (sub ? ' · ' + sub : '');
-  document.getElementById('tt-val').textContent   = val + ' · ' + pct;
+  document.getElementById('tt-val').textContent   = valStr + ' · ' + pct;
   tt.style.left = (e.clientX + 12) + 'px';
   tt.style.top  = (e.clientY - 10) + 'px';
   tt.classList.add('show');
