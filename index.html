@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CE Production Footprint Explorer — UNIDO CB-ACES</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;1,9..144,300&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #f4f1eb;
+  --bg2:       #eceae3;
+  --bg3:       #e2dfd7;
+  --ink:       #1a1916;
+  --ink2:      #4a4844;
+  --ink3:      #8a8780;
+  --border:    rgba(26,25,22,0.12);
+  --border2:   rgba(26,25,22,0.22);
+  --accent:    #1a1916;
+  --radius:    6px;
+  --font-mono: 'DM Mono', monospace;
+  --font-serif:'Fraunces', Georgia, serif;
+
+  --c-ghg:     #c94a28;
+  --c-mat:     #2a6bbf;
+  --c-land:    #3d7a2e;
+  --c-eco-tox: #7a4a9e;
+  --c-eco-acid:#4a7a6e;
+  --c-wat-g:   #2e8a6e;
+  --c-wat-b:   #1a5f8a;
+  --c-pm:      #8a5a1a;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ── LOADING SCREEN ─────────────────────────────────────────── */
+#loading {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 20px; z-index: 100;
+  transition: opacity 0.4s;
+}
+#loading.hidden { opacity: 0; pointer-events: none; }
+.loading-title {
+  font-family: var(--font-serif);
+  font-size: 22px; font-weight: 300;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.loading-bar-wrap {
+  width: 200px; height: 2px;
+  background: var(--bg3); border-radius: 2px; overflow: hidden;
+}
+.loading-bar {
+  height: 100%; width: 0%; background: var(--ink);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.loading-sub {
+  font-size: 10px; color: var(--ink3);
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
+
+/* ── LAYOUT ─────────────────────────────────────────────────── */
+#app { display: none; flex-direction: column; min-height: 100vh; }
+#app.visible { display: flex; }
+
+.topbar {
+  display: flex; align-items: center;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  gap: 16px; flex-wrap: wrap;
+  background: var(--bg);
+}
+
+.logo-block { display: flex; flex-direction: column; gap: 1px; }
+.logo-title {
+  font-family: var(--font-serif);
+  font-size: 14px; font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.logo-sub {
+  font-size: 9px; color: var(--ink3);
+  text-transform: uppercase; letter-spacing: 0.12em;
+}
+
+.topbar-divider {
+  width: 1px; height: 28px;
+  background: var(--border); flex-shrink: 0;
+}
+
+.ctrl-row {
+  display: flex; gap: 12px;
+  align-items: flex-end; flex-wrap: wrap; flex: 1;
+}
+
+.ctrl { display: flex; flex-direction: column; gap: 3px; }
+.ctrl-lbl {
+  font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink3);
+}
+
+select, .sel {
+  font-family: var(--font-mono); font-size: 11px;
+  border: 1px solid var(--border2); border-radius: var(--radius);
+  padding: 5px 24px 5px 8px;
+  background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a8780'/%3E%3C/svg%3E") no-repeat right 7px center;
+  color: var(--ink); cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  min-width: 150px;
+}
+select:focus { outline: none; border-color: var(--ink); }
+
+.ind-row { display: flex; gap: 3px; flex-wrap: wrap; }
+.ind-btn {
+  padding: 4px 9px; font-size: 9px; font-family: var(--font-mono);
+  border: 1px solid var(--border2); border-radius: 14px;
+  cursor: pointer; background: transparent; color: var(--ink2);
+  transition: all 0.12s; text-transform: uppercase; letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.ind-btn:hover { background: var(--bg2); }
+.ind-btn.on { color: #fff; border-color: transparent; }
+.ind-btn[data-ind="GHG"].on     { background: var(--c-ghg); }
+.ind-btn[data-ind="MAT"].on     { background: var(--c-mat); }
+.ind-btn[data-ind="LAND"].on    { background: var(--c-land); }
+.ind-btn[data-ind="ECO_TOX"].on { background: var(--c-eco-tox); }
+.ind-btn[data-ind="ECO_ACID"].on{ background: var(--c-eco-acid); }
+.ind-btn[data-ind="WAT_GREEN"].on{ background: var(--c-wat-g); }
+.ind-btn[data-ind="WAT_BLUE"].on { background: var(--c-wat-b); }
+.ind-btn[data-ind="PM"].on      { background: var(--c-pm); }
+
+.reset-btn {
+  padding: 4px 10px; font-size: 9px; font-family: var(--font-mono);
+  border: 1px solid var(--border); border-radius: 14px;
+  cursor: pointer; background: transparent; color: var(--ink3);
+  transition: all 0.12s; margin-left: auto; text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.reset-btn:hover { color: var(--ink); border-color: var(--border2); }
+
+/* ── SECTOR TABS ─────────────────────────────────────────────── */
+.sector-bar {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+.sec-lbl {
+  font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink3);
+  margin-right: 4px; flex-shrink: 0;
+}
+.sec-btn {
+  padding: 3px 9px; font-size: 10px; font-family: var(--font-mono);
+  border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; background: transparent; color: var(--ink2);
+  transition: all 0.1s;
+}
+.sec-btn:hover { background: var(--bg2); border-color: var(--border2); }
+.sec-btn.on {
+  background: var(--ink); color: var(--bg);
+  border-color: var(--ink);
+}
+
+/* ── METRICS STRIP ───────────────────────────────────────────── */
+.metrics {
+  display: flex; gap: 1px;
+  border-bottom: 1px solid var(--border);
+  background: var(--border);
+}
+.metric {
+  flex: 1; background: var(--bg);
+  padding: 8px 14px;
+}
+.metric-lbl {
+  font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--ink3);
+  margin-bottom: 3px;
+}
+.metric-val {
+  font-family: var(--font-serif);
+  font-size: 20px; font-weight: 300;
+  line-height: 1; color: var(--ink);
+}
+.metric-unit {
+  font-family: var(--font-mono);
+  font-size: 9px; color: var(--ink3); font-weight: 400;
+}
+.metric-val.colored { }
+
+/* ── MAIN CANVAS ─────────────────────────────────────────────── */
+.canvas {
+  display: grid;
+  grid-template-columns: 1fr 30px 1fr 30px 1fr 1px 180px;
+  flex: 1;
+  min-height: 0;
+}
+
+.col-panel {
+  display: flex; flex-direction: column;
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+
+.col-panel-header {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.col-hdr-title {
+  font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink3);
+}
+.view-tog { display: flex; gap: 2px; }
+.vt {
+  padding: 2px 6px; font-size: 8px; font-family: var(--font-mono);
+  border: 1px solid var(--border); border-radius: 10px;
+  cursor: pointer; background: transparent; color: var(--ink3);
+  transition: all 0.1s; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.vt:hover { background: var(--bg2); }
+.vt.on { background: var(--ink2); color: var(--bg); border-color: var(--ink2); }
+
+/* flow nodes */
+.flow-node {
+  display: flex; align-items: center;
+  padding: 5px 8px; border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  margin-bottom: 4px; cursor: default;
+  transition: border-color 0.1s, background 0.1s;
+  position: relative;
+  gap: 6px;
+}
+.flow-node:hover { border-color: var(--border2); background: var(--bg3); }
+.flow-node.domestic {
+  border-left-width: 3px;
+}
+.flow-node-labels { flex: 1; min-width: 0; }
+.flow-node-main {
+  font-size: 10px; font-weight: 500; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.flow-node-sub {
+  font-size: 9px; color: var(--ink3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.flow-node-pct {
+  font-size: 10px; font-weight: 500; flex-shrink: 0;
+  min-width: 32px; text-align: right;
+}
+.flow-bar {
+  position: absolute; bottom: 0; left: 0;
+  height: 2px; border-radius: 0 0 4px 4px;
+  opacity: 0.5;
+}
+.other-node {
+  display: flex; align-items: center;
+  padding: 4px 8px; border-radius: 4px;
+  border: 1px dashed var(--border);
+  color: var(--ink3); font-size: 9px;
+  margin-bottom: 4px; gap: 6px;
+  justify-content: space-between;
+}
+
+/* connector columns */
+.connector-col {
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.connector-col svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+
+/* center node */
+.center-col {
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px 8px;
+}
+.center-node {
+  border: 1.5px solid currentColor;
+  border-radius: 10px;
+  padding: 14px 12px;
+  text-align: center;
+  width: 100%;
+  position: relative;
+}
+.center-country {
+  font-family: var(--font-serif);
+  font-size: 15px; font-weight: 500;
+  line-height: 1.2; margin-bottom: 2px;
+}
+.center-sector {
+  font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.08em; opacity: 0.7;
+  margin-bottom: 10px;
+}
+.center-total {
+  font-family: var(--font-serif);
+  font-size: 24px; font-weight: 300;
+  line-height: 1;
+}
+.center-unit {
+  font-size: 9px; opacity: 0.6; margin-top: 2px;
+}
+.center-direct {
+  position: absolute; top: 8px; right: 8px;
+  width: 28px; height: 28px;
+}
+.direct-label {
+  font-size: 7px; text-align: center;
+  opacity: 0.5; margin-top: 2px;
+}
+
+/* divider */
+.panel-divider {
+  background: var(--border);
+  width: 1px;
+}
+
+/* rank panel */
+.rank-panel {
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+.rank-section-title {
+  font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink3);
+  margin-bottom: 8px; margin-top: 12px;
+}
+.rank-section-title:first-child { margin-top: 0; }
+.rank-item {
+  display: flex; align-items: center;
+  gap: 6px; margin-bottom: 5px;
+}
+.rank-code {
+  font-size: 9px; font-weight: 500; color: var(--ink);
+  width: 24px; flex-shrink: 0;
+}
+.rank-bar-wrap {
+  flex: 1; height: 3px;
+  background: var(--bg3); border-radius: 2px; overflow: hidden;
+}
+.rank-bar { height: 100%; border-radius: 2px; }
+.rank-pct {
+  font-size: 9px; color: var(--ink3);
+  width: 28px; text-align: right; flex-shrink: 0;
+}
+
+/* ── TOOLTIP ─────────────────────────────────────────────────── */
+.tooltip {
+  position: fixed;
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 10px; line-height: 1.5;
+  pointer-events: none; opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 50; max-width: 200px;
+}
+.tooltip.show { opacity: 1; }
+.tt-title { font-weight: 500; margin-bottom: 1px; }
+.tt-val { opacity: 0.7; font-size: 9px; }
+
+/* ── FOOTNOTE ────────────────────────────────────────────────── */
+.footnote {
+  font-size: 8px; color: var(--ink3);
+  padding: 6px 20px 8px;
+  border-top: 1px solid var(--border);
+  line-height: 1.6;
+}
+
+/* ── ERROR ───────────────────────────────────────────────────── */
+.error-bar {
+  display: none; background: #fff3f0;
+  border-bottom: 1px solid #f5c6bb;
+  padding: 8px 20px; font-size: 11px;
+  color: var(--c-ghg);
+  align-items: center; gap: 10px;
+}
+.error-bar.show { display: flex; }
+
+/* ── SPINNER ─────────────────────────────────────────────────── */
+.spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 1.5px solid var(--bg3);
+  border-top-color: var(--ink3);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── RESPONSIVE ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .canvas { grid-template-columns: 1fr 20px 1fr 20px 1fr 1px 140px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div id="loading">
+  <div class="loading-title">CE Production Footprint Explorer</div>
+  <div class="loading-bar-wrap"><div class="loading-bar" id="load-bar"></div></div>
+  <div class="loading-sub" id="load-msg">Loading data…</div>
+</div>
+
+<!-- Main app -->
+<div id="app">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="logo-block">
+      <div class="logo-title">CE Production Footprint Explorer</div>
+      <div class="logo-sub">UNIDO CB-ACES · EXIOBASE v3.8.3 · 2022</div>
+    </div>
+    <div class="topbar-divider"></div>
+    <div class="ctrl-row">
+      <div class="ctrl">
+        <span class="ctrl-lbl">Producing country</span>
+        <select id="sel-country" onchange="onCountry(this.value)"></select>
+      </div>
+      <div class="ctrl">
+        <span class="ctrl-lbl">Environmental pressure</span>
+        <div class="ind-row" id="ind-row"></div>
+      </div>
+      <button class="reset-btn" onclick="doReset()">↺ reset</button>
+    </div>
+  </div>
+
+  <!-- Error bar -->
+  <div class="error-bar" id="error-bar">
+    <span id="error-msg">No data for this combination.</span>
+    <button class="reset-btn" onclick="doReset()">Reset</button>
+  </div>
+
+  <!-- Sector tabs -->
+  <div class="sector-bar" id="sector-bar">
+    <span class="sec-lbl">Sector</span>
+  </div>
+
+  <!-- Metrics strip -->
+  <div class="metrics" id="metrics"></div>
+
+  <!-- Main canvas -->
+  <div class="canvas" id="canvas">
+    <!-- upstream panel -->
+    <div class="col-panel" id="up-panel">
+      <div class="col-panel-header">
+        <span class="col-hdr-title">Upstream suppliers</span>
+        <div class="view-tog">
+          <button class="vt on" data-side="left" data-v="mixed" onclick="setView('left','mixed',this)">top</button>
+          <button class="vt" data-side="left" data-v="country" onclick="setView('left','country',this)">country</button>
+          <button class="vt" data-side="left" data-v="sector" onclick="setView('left','sector',this)">sector</button>
+        </div>
+      </div>
+      <div id="up-nodes"></div>
+    </div>
+
+    <!-- left connector -->
+    <div class="connector-col" id="left-conn">
+      <svg id="left-svg" preserveAspectRatio="none"></svg>
+    </div>
+
+    <!-- center -->
+    <div class="center-col" id="center-col">
+      <div class="center-node" id="center-node">
+        <svg class="center-direct" id="direct-arc" viewBox="0 0 28 28"></svg>
+        <div class="center-country" id="cn-country">—</div>
+        <div class="center-sector" id="cn-sector">—</div>
+        <div class="center-total" id="cn-total">—</div>
+        <div class="center-unit" id="cn-unit">—</div>
+      </div>
+    </div>
+
+    <!-- right connector -->
+    <div class="connector-col" id="right-conn">
+      <svg id="right-svg" preserveAspectRatio="none"></svg>
+    </div>
+
+    <!-- downstream panel -->
+    <div class="col-panel" id="dn-panel">
+      <div class="col-panel-header">
+        <span class="col-hdr-title">Downstream buyers</span>
+        <div class="view-tog">
+          <button class="vt on" data-side="right" data-v="mixed" onclick="setView('right','mixed',this)">top</button>
+          <button class="vt" data-side="right" data-v="country" onclick="setView('right','country',this)">country</button>
+          <button class="vt" data-side="right" data-v="sector" onclick="setView('right','sector',this)">sector</button>
+        </div>
+      </div>
+      <div id="dn-nodes"></div>
+    </div>
+
+    <!-- divider -->
+    <div class="panel-divider"></div>
+
+    <!-- rank panel -->
+    <div class="rank-panel" id="rank-panel"></div>
+  </div>
+
+  <!-- Footnote -->
+  <div class="footnote" id="footnote"></div>
+</div>
+
+<!-- Tooltip -->
+<div class="tooltip" id="tooltip">
+  <div class="tt-title" id="tt-title"></div>
+  <div class="tt-val" id="tt-val"></div>
+</div>
+
+<script>
+// =============================================================================
+// CONFIG
+// =============================================================================
+
+const BASE_URL   = './countries/';
+const META_URL   = './meta.json';
+const CB_ACES    = ['BR','MX','ZA'];
+const PRELOAD    = ['BR','MX','ZA'];
+
+// Dynamic cutoff: show nodes while cumulative < CUTOFF_PCT and share >= MIN_SHARE and count < MAX_NODES
+const CUTOFF_PCT  = 80;
+const MIN_SHARE   = 1.0;   // percent
+const MAX_NODES   = 10;
+const MIN_NODES   = 3;
+
+const IND_COLOR = {
+  GHG:'#c94a28', MAT:'#2a6bbf', LAND:'#3d7a2e',
+  ECO_TOX:'#7a4a9e', ECO_ACID:'#4a7a6e',
+  WAT_GREEN:'#2e8a6e', WAT_BLUE:'#1a5f8a', PM:'#8a5a1a',
+};
+
+const IND_SHORT = {
+  GHG:'GHG', MAT:'Materials', LAND:'Land',
+  ECO_TOX:'Ecotoxicity', ECO_ACID:'Acid/Eutroph.',
+  WAT_GREEN:'Water (green)', WAT_BLUE:'Water (blue)', PM:'Particles',
+};
+
+// =============================================================================
+// STATE
+// =============================================================================
+
+let META     = null;
+let CACHE    = {};   // country code -> country data
+let S = {
+  country:   'BR',
+  indicator: 'GHG',
+  sector:    null,   // set after meta loads
+  leftView:  'mixed',
+  rightView: 'mixed',
+};
+
+// =============================================================================
+// LOADING
+// =============================================================================
+
+function setLoadProgress(pct, msg) {
+  document.getElementById('load-bar').style.width = pct + '%';
+  document.getElementById('load-msg').textContent  = msg;
+}
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+  return r.json();
+}
+
+async function loadCountry(code) {
+  if (CACHE[code]) return CACHE[code];
+  const d = await fetchJSON(BASE_URL + code + '.json');
+  CACHE[code] = d;
+  return d;
+}
+
+async function init() {
+  try {
+    setLoadProgress(10, 'Loading metadata…');
+    META = await fetchJSON(META_URL);
+
+    setLoadProgress(30, 'Loading BR, MX, ZA…');
+    await Promise.all(PRELOAD.map(c => loadCountry(c)));
+
+    setLoadProgress(90, 'Building interface…');
+    buildInterface();
+
+    setLoadProgress(100, 'Ready');
+    await new Promise(r => setTimeout(r, 300));
+
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.add('visible');
+
+  } catch(e) {
+    document.getElementById('load-msg').textContent = 'Error: ' + e.message;
+    console.error(e);
+  }
+}
+
+// =============================================================================
+// BUILD INTERFACE (run once after meta loads)
+// =============================================================================
+
+function buildInterface() {
+  // Country dropdown
+  const sel = document.getElementById('sel-country');
+  const cbAces  = META.countries.filter(c => c.cb_aces);
+  const others  = META.countries.filter(c => !c.cb_aces && !c.row);
+  const rowRegs = META.countries.filter(c => c.row);
+
+  sel.innerHTML =
+    `<optgroup label="CB-ACES focus countries">
+      ${cbAces.map(c=>`<option value="${c.code}">${c.name}</option>`).join('')}
+    </optgroup>
+    <optgroup label="All EXIOBASE countries">
+      ${others.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('')}
+    </optgroup>
+    <optgroup label="Rest-of-world aggregates">
+      ${rowRegs.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('')}
+    </optgroup>`;
+  sel.value = S.country;
+
+  // Indicator buttons
+  const indRow = document.getElementById('ind-row');
+  indRow.innerHTML = META.indicators.map(ind =>
+    `<button class="ind-btn${S.indicator===ind.id?' on':''}"
+      data-ind="${ind.id}"
+      onclick="onInd('${ind.id}',this)"
+      title="${ind.label} (${ind.unit})"
+     >${IND_SHORT[ind.id]||ind.id}</button>`
+  ).join('');
+
+  // Default sector = first sector
+  S.sector = META.sectors[0];
+
+  render();
+}
+
+// =============================================================================
+// EVENT HANDLERS
+// =============================================================================
+
+function onCountry(code) {
+  S.country = code;
+  loadCountry(code).then(() => render()).catch(showError);
+}
+
+function onInd(id, btn) {
+  S.indicator = id;
+  document.querySelectorAll('.ind-btn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  render();
+}
+
+function setSector(sec) {
+  S.sector = sec;
+  render();
+}
+
+function setView(side, v, btn) {
+  S[side + 'View'] = v;
+  document.querySelectorAll(`.vt[data-side="${side}"]`).forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  render();
+}
+
+function doReset() {
+  S = { country:'BR', indicator:'GHG', sector:META.sectors[0], leftView:'mixed', rightView:'mixed' };
+  document.getElementById('sel-country').value = 'BR';
+  document.querySelectorAll('.ind-btn').forEach((b,i) => b.classList.toggle('on', b.dataset.ind === 'GHG'));
+  document.querySelectorAll('.vt[data-side="left"]').forEach((b,i) => b.classList.toggle('on', i===0));
+  document.querySelectorAll('.vt[data-side="right"]').forEach((b,i) => b.classList.toggle('on', i===0));
+  hideError();
+  render();
+}
+
+function showError(msg) {
+  const bar = document.getElementById('error-bar');
+  document.getElementById('error-msg').textContent = msg || 'No data for this combination.';
+  bar.classList.add('show');
+}
+function hideError() {
+  document.getElementById('error-bar').classList.remove('show');
+}
+
+// =============================================================================
+// DYNAMIC CUTOFF
+// =============================================================================
+
+function applyDynamicCutoff(flows) {
+  // flows: [{label, sub, val, pct, ctry}, ...]
+  // Sort descending
+  const sorted = [...flows].sort((a,b) => b.val - a.val);
+  const total  = sorted.reduce((s,f) => s + f.val, 0);
+  if (total <= 0) return { shown: [], other: null };
+
+  let cumPct  = 0;
+  let shown   = [];
+  let rest    = [];
+
+  for (const f of sorted) {
+    const sharePct = f.val / total * 100;
+    if (
+      shown.length < MIN_NODES ||
+      (cumPct < CUTOFF_PCT && sharePct >= MIN_SHARE && shown.length < MAX_NODES)
+    ) {
+      shown.push({ ...f, sharePct });
+      cumPct += sharePct;
+    } else {
+      rest.push(f);
+    }
+  }
+
+  let other = null;
+  if (rest.length > 0) {
+    const restVal = rest.reduce((s,f) => s+f.val, 0);
+    other = {
+      label: `Other (${rest.length} more)`,
+      val:   restVal,
+      pct:   restVal / total * 100,
+    };
+  }
+
+  return { shown, other };
+}
+
+// =============================================================================
+// AGGREGATION
+// =============================================================================
+
+function aggregateFlows(rawFlows, view, ctryKey, secKey) {
+  // rawFlows: upstream [{ctry,sec,val,pct}] or downstream [{ctry,sec,val,pct}]
+  if (view === 'country') {
+    const m = {};
+    rawFlows.forEach(f => {
+      const k = f[ctryKey];
+      m[k] = (m[k]||0) + f.val;
+    });
+    const total = Object.values(m).reduce((a,v)=>a+v,0)||1;
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({
+      label: getCountryName(k), sub:'', val:v, pct:v/total*100, ctry:k,
+    }));
+  }
+  if (view === 'sector') {
+    const m = {};
+    rawFlows.forEach(f => {
+      const k = f[secKey]||f.sec||f.cat||'—';
+      m[k] = (m[k]||0) + f.val;
+    });
+    const total = Object.values(m).reduce((a,v)=>a+v,0)||1;
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({
+      label:k, sub:'', val:v, pct:v/total*100, ctry:'',
+    }));
+  }
+  // mixed
+  const total = rawFlows.reduce((a,f)=>a+f.val,0)||1;
+  return rawFlows.map(f=>({
+    label: getCountryName(f[ctryKey]||''),
+    sub:   f[secKey]||f.sec||f.cat||'',
+    val:   f.val,
+    pct:   f.val/total*100,
+    ctry:  f[ctryKey]||'',
+  }));
+}
+
+function getCountryName(code) {
+  if (!META) return code;
+  const c = META.countries.find(x => x.code === code);
+  return c ? c.name : code;
+}
+
+// =============================================================================
+// FORMAT NUMBERS
+// =============================================================================
+
+function fmtVal(v, unit) {
+  if (v === undefined || v === null) return '—';
+  if (v >= 1000) return (v/1000).toFixed(1) + 'k';
+  if (v >= 100)  return Math.round(v).toString();
+  if (v >= 10)   return v.toFixed(1);
+  if (v >= 1)    return v.toFixed(2);
+  return v.toFixed(3);
+}
+
+// =============================================================================
+// RENDER
+// =============================================================================
+
+function render() {
+  try {
+    hideError();
+    const cdata = CACHE[S.country];
+    if (!cdata) { showError('Country data not loaded yet — please wait.'); return; }
+
+    const indData = cdata.data[S.indicator];
+    if (!indData) { showError('Indicator not available for this country.'); return; }
+
+    const secData = indData[S.sector];
+    if (!secData) { showError('No data for this country / sector combination.'); return; }
+
+    const col = IND_COLOR[S.indicator] || '#888';
+    const indMeta = META.indicators.find(i => i.id === S.indicator);
+
+    renderSectorBar();
+    renderMetrics(secData, indMeta, col);
+    renderCenter(secData, indMeta, col, cdata.name);
+    renderFlows(secData, col);
+    renderRankPanel(secData, col);
+    renderFootnote(secData, indMeta);
+
+    // Draw connectors after DOM settles
+    requestAnimationFrame(() => drawConnectors(col));
+
+  } catch(e) {
+    console.error(e);
+    showError('Rendering error: ' + e.message);
+  }
+}
+
+function renderSectorBar() {
+  const bar = document.getElementById('sector-bar');
+  bar.innerHTML = '<span class="sec-lbl">Sector</span>' +
+    META.sectors.map(sec =>
+      `<button class="sec-btn${S.sector===sec?' on':''}" onclick="setSector('${sec.replace(/'/g,"\\'")}')">
+        ${sec}
+      </button>`
+    ).join('');
+}
+
+function renderMetrics(secData, indMeta, col) {
+  const unit = secData.unit || indMeta?.unit || '';
+  document.getElementById('metrics').innerHTML = `
+    <div class="metric">
+      <div class="metric-lbl">${indMeta?.label||S.indicator}</div>
+      <div class="metric-val" style="color:${col}">${fmtVal(secData.total)} <span class="metric-unit">${unit}</span></div>
+    </div>
+    <div class="metric">
+      <div class="metric-lbl">Direct (on-site)</div>
+      <div class="metric-val">${secData.direct_pct}<span class="metric-unit">%</span></div>
+    </div>
+    <div class="metric">
+      <div class="metric-lbl">Embodied upstream</div>
+      <div class="metric-val">${100-secData.direct_pct}<span class="metric-unit">%</span></div>
+    </div>
+    <div class="metric">
+      <div class="metric-lbl">Upstream sources</div>
+      <div class="metric-val">${secData.upstream?.length||0}</div>
+    </div>
+    <div class="metric">
+      <div class="metric-lbl">Downstream buyers</div>
+      <div class="metric-val">${secData.downstream?.length||0}</div>
+    </div>`;
+}
+
+function renderCenter(secData, indMeta, col, countryName) {
+  document.getElementById('center-node').style.color = col;
+  document.getElementById('cn-country').textContent  = countryName || S.country;
+  document.getElementById('cn-sector').textContent   = S.sector;
+  document.getElementById('cn-total').textContent    = fmtVal(secData.total);
+  document.getElementById('cn-unit').textContent     = secData.unit || indMeta?.unit || '';
+
+  // Direct % arc
+  const svg = document.getElementById('direct-arc');
+  const r = 11, cx = 14, cy = 14;
+  const pct = secData.direct_pct / 100;
+  const angle = pct * Math.PI * 2;
+  const x2 = cx + r * Math.sin(angle);
+  const y2 = cy - r * Math.cos(angle);
+  const laf = pct > 0.5 ? 1 : 0;
+  svg.innerHTML = `
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="1" opacity="0.2"/>
+    ${pct > 0 && pct < 1
+      ? `<path d="M${cx},${cy-r} A${r},${r} 0 ${laf},1 ${x2.toFixed(2)},${y2.toFixed(2)}"
+           fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round"/>`
+      : pct >= 1
+      ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="2"/>`
+      : ''
+    }
+    <text x="${cx}" y="${cy+1}" text-anchor="middle" dominant-baseline="central"
+      fill="${col}" font-size="7" font-family="'DM Mono',monospace">${secData.direct_pct}%</text>`;
+}
+
+function renderFlows(secData, col) {
+  // Upstream
+  const upRaw = aggregateFlows(secData.upstream||[], S.leftView, 'ctry', 'sec');
+  const { shown: upShown, other: upOther } = applyDynamicCutoff(upRaw);
+  renderNodeList('up-nodes', upShown, upOther, col, S.country, secData.total);
+
+  // Downstream
+  const dnRaw = aggregateFlows(secData.downstream||[], S.rightView, 'ctry', 'sec');
+  const { shown: dnShown, other: dnOther } = applyDynamicCutoff(dnRaw);
+  renderNodeList('dn-nodes', dnShown, dnOther, col, S.country, secData.total);
+}
+
+function renderNodeList(containerId, shown, other, col, producingCountry, totalImpact) {
+  const el = document.getElementById(containerId);
+  const maxVal = shown.length > 0 ? shown[0].val : 1;
+
+  el.innerHTML = shown.map((f, i) => {
+    const isDom  = f.ctry === producingCountry;
+    const barPct = Math.round(f.val / maxVal * 100);
+    const domStyle = isDom ? `border-left-color:${col};` : '';
+    return `<div class="flow-node${isDom?' domestic':''}"
+      style="${domStyle}"
+      onmouseenter="showTip(event,'${escQ(f.label)}','${escQ(f.sub||'')}',${f.val.toFixed(4)},'${f.pct.toFixed(1)}%')"
+      onmouseleave="hideTip()">
+      <div class="flow-node-labels">
+        <div class="flow-node-main">${f.label}</div>
+        ${f.sub ? `<div class="flow-node-sub">${f.sub}</div>` : ''}
+      </div>
+      <div class="flow-node-pct" style="color:${isDom?col:'var(--ink2)'}">${f.pct.toFixed(1)}%</div>
+      <div class="flow-bar" style="width:${barPct}%;background:${col}"></div>
+    </div>`;
+  }).join('') +
+  (other ? `<div class="other-node">
+    <span>${other.label}</span>
+    <span style="color:var(--ink3)">${other.pct.toFixed(1)}%</span>
+  </div>` : '');
+}
+
+function escQ(s) {
+  return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+}
+
+function renderRankPanel(secData, col) {
+  // Top upstream countries
+  const upByCtry = {};
+  (secData.upstream||[]).forEach(f => {
+    upByCtry[f.ctry] = (upByCtry[f.ctry]||0) + f.val;
+  });
+  const upSorted = Object.entries(upByCtry).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const upTotal  = upSorted.reduce((s,[,v])=>s+v,0)||1;
+  const maxUp    = upSorted[0]?.[1]||1;
+
+  // Top downstream countries
+  const dnByCtry = {};
+  (secData.downstream||[]).forEach(f => {
+    dnByCtry[f.ctry] = (dnByCtry[f.ctry]||0) + f.val;
+  });
+  const dnSorted = Object.entries(dnByCtry).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const dnTotal  = dnSorted.reduce((s,[,v])=>s+v,0)||1;
+  const maxDn    = dnSorted[0]?.[1]||1;
+
+  document.getElementById('rank-panel').innerHTML =
+    `<div class="rank-section-title">Top upstream origins</div>` +
+    upSorted.map(([code, val]) => {
+      const isDom = code === S.country;
+      const pct   = Math.round(val/upTotal*100);
+      const bw    = Math.round(val/maxUp*100);
+      return `<div class="rank-item">
+        <span class="rank-code">${code}</span>
+        <div class="rank-bar-wrap">
+          <div class="rank-bar" style="width:${bw}%;background:${isDom?col:'var(--bg3)'}"></div>
+        </div>
+        <span class="rank-pct">${pct}%</span>
+      </div>`;
+    }).join('') +
+    `<div class="rank-section-title">Top downstream destinations</div>` +
+    dnSorted.map(([code, val]) => {
+      const isDom = code === S.country;
+      const pct   = Math.round(val/dnTotal*100);
+      const bw    = Math.round(val/maxDn*100);
+      return `<div class="rank-item">
+        <span class="rank-code">${code}</span>
+        <div class="rank-bar-wrap">
+          <div class="rank-bar" style="width:${bw}%;background:${isDom?col:'var(--bg3)'}"></div>
+        </div>
+        <span class="rank-pct">${pct}%</span>
+      </div>`;
+    }).join('');
+}
+
+function drawConnectors(col) {
+  ['left','right'].forEach(side => {
+    const panelId  = side === 'left' ? 'up-nodes' : 'dn-nodes';
+    const svgId    = side === 'left' ? 'left-svg' : 'right-svg';
+    const connId   = side === 'left' ? 'left-conn': 'right-conn';
+    const panel    = document.getElementById(panelId);
+    const svg      = document.getElementById(svgId);
+    const conn     = document.getElementById(connId);
+    const center   = document.getElementById('center-node');
+
+    const nodes    = panel.querySelectorAll('.flow-node, .other-node');
+    const connRect = conn.getBoundingClientRect();
+    const cRect    = center.getBoundingClientRect();
+    const cMidY    = cRect.top + cRect.height/2 - connRect.top;
+
+    const W = connRect.width;
+    const paths = [];
+
+    nodes.forEach(node => {
+      const nRect  = node.getBoundingClientRect();
+      const nMidY  = nRect.top + nRect.height/2 - connRect.top;
+      const isDom  = node.classList.contains('domestic');
+      const isOther= node.classList.contains('other-node');
+      const pctEl  = node.querySelector('.flow-node-pct');
+      const pctVal = pctEl ? parseFloat(pctEl.textContent) : 5;
+      const sw     = Math.max(1, pctVal / 100 * 16);
+      const opacity= isOther ? 0.1 : (isDom ? 0.4 : 0.18);
+
+      let x1, x2, y1 = nMidY, y2 = cMidY;
+      if (side === 'left') { x1 = 0; x2 = W; }
+      else                 { x1 = W; x2 = 0; }
+      const cpx = (x1 + x2) / 2;
+
+      paths.push(`<path d="M${x1},${y1} C${cpx},${y1} ${cpx},${y2} ${x2},${y2}"
+        fill="none" stroke="${col}" stroke-width="${sw.toFixed(1)}"
+        stroke-opacity="${opacity}"/>`);
+    });
+
+    svg.setAttribute('viewBox', `0 0 ${W} ${connRect.height}`);
+    svg.innerHTML = paths.join('');
+  });
+}
+
+function renderFootnote(secData, indMeta) {
+  const viewLbl = { mixed:'top destinations', country:'by country', sector:'by sector' };
+  document.getElementById('footnote').textContent =
+    `Production perspective · ${getCountryName(S.country)} — ${S.sector} · ` +
+    `${indMeta?.label||S.indicator} (${secData.unit||indMeta?.unit||''}) · ` +
+    `Upstream: ${viewLbl[S.leftView]} · Downstream: ${viewLbl[S.rightView]} · ` +
+    `Direct share ${secData.direct_pct}% (arc in center node) · ` +
+    `EXIOBASE v3.8.3 pxp 2022 · Ecosystem quality: EcoIndicator 99 Hierarchist (H.A) · ` +
+    `Dynamic cutoff: top ${MAX_NODES} nodes covering ${CUTOFF_PCT}% of total`;
+}
+
+// =============================================================================
+// TOOLTIP
+// =============================================================================
+
+function showTip(e, title, sub, val, pct) {
+  const tt = document.getElementById('tooltip');
+  document.getElementById('tt-title').textContent = title + (sub ? ' · ' + sub : '');
+  document.getElementById('tt-val').textContent   = val + ' · ' + pct;
+  tt.style.left = (e.clientX + 12) + 'px';
+  tt.style.top  = (e.clientY - 10) + 'px';
+  tt.classList.add('show');
+}
+function hideTip() {
+  document.getElementById('tooltip').classList.remove('show');
+}
+
+// =============================================================================
+// RESIZE HANDLER (redraw connectors)
+// =============================================================================
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const col = IND_COLOR[S.indicator]||'#888';
+    drawConnectors(col);
+  }, 100);
+});
+
+// =============================================================================
+// BOOT
+// =============================================================================
+
+init();
+</script>
+</body>
+</html>
