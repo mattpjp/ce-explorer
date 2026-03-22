@@ -786,26 +786,25 @@ function getCountryName(code) {
 
 // =============================================================================
 // DISPLAY SCALE CORRECTIONS
-// Divisors derived empirically from stored values vs known plausible ranges.
-// After next pipeline re-run (scale=1.0), update all to native-unit divisors.
-// Current JSON pipeline used scale=1e-6 for GHG/MAT/WAT, scale=1.0 for rest.
+// F matrix units confirmed from EXIOBASE v3.8 documentation:
+//   GHG:      kg CO₂eq  → Mt  (/1e9,  1 Mt = 1e9 kg)
+//   MAT (DEU):kt        → Mt  (/1e3,  1 Mt = 1e3 kt)
+//   LAND:     km²       → Mha (/100,  1 Mha = 100 km²)
+//   ECO:      PDF·m²·yr → ×10⁹ PDF·m²·yr (/1e9)
+//   WAT:      Mm³       → km³ (/1e3,  1 km³ = 1e3 Mm³)
+//   PM:       kg        → kt  (/1e6,  1 kt = 1e6 kg)
+// Pipeline scale=1.0 for all — stored values are in native F units.
 // =============================================================================
 
 const DISPLAY = {
-  // stored=1,090,342 → /1e3 = 1,090 Mt ✓ (Brazil production footprint ~1,000-2,000 Mt)
-  GHG:      { div: 1e3,   unit: 'Mt CO\u2082eq' },
-  // stored=2.087 → *1e3 = 2,087 Mt ✓ (Brazil DMC ~2,000-3,000 Mt)
-  MAT:      { div: 1e-3,  unit: 'Mt' },
-  // stored=3,539,566 km² → /100 = 35,396 Mha ✓ (large but plausible for full GVC)
-  LAND:     { div: 100,   unit: 'Mha' },
-  // stored=1.48e9 → /1e9 = 1.48 ✓
-  ECO_TOX:  { div: 1e9,   unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
-  ECO_ACID: { div: 1e9,   unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
-  // stored=0.22 Mm³ → *1e3 = 221 Mm³ (plausible for green water, ag-only satellite)
-  WAT_GREEN:{ div: 1e-3,  unit: 'Mm\u00b3' },
-  WAT_BLUE: { div: 1e-3,  unit: 'Mm\u00b3' },
-  // stored=1.35e9 kg → /1e6 = 1,353 kt ✓
-  PM:       { div: 1e6,   unit: 'kt PM2.5eq' },
+  GHG:      { div: 1e9, unit: 'Mt CO\u2082eq' },
+  MAT:      { div: 1e3, unit: 'Mt' },
+  LAND:     { div: 100, unit: 'Mha' },
+  ECO_TOX:  { div: 1e9, unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
+  ECO_ACID: { div: 1e9, unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
+  WAT_GREEN:{ div: 1e3, unit: 'km\u00b3' },
+  WAT_BLUE: { div: 1e3, unit: 'km\u00b3' },
+  PM:       { div: 1e6, unit: 'kt PM2.5eq' },
 }
 
 function applyScale(v, indId) {
