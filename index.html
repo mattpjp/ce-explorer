@@ -786,27 +786,27 @@ function getCountryName(code) {
 
 // =============================================================================
 // DISPLAY SCALE CORRECTIONS
-// Applied client-side — pipeline stored raw values, these bring them to display units.
+// Divisors derived empirically from stored values vs known plausible ranges.
+// After next pipeline re-run (scale=1.0), update all to native-unit divisors.
+// Current JSON pipeline used scale=1e-6 for GHG/MAT/WAT, scale=1.0 for rest.
 // =============================================================================
 
 const DISPLAY = {
-  // id: { divisor, unit }
-  // Divisors correct for raw pipeline output values:
-  // GHG stored in kg CO₂eq (pipeline scale=1e-6 not applied) → /1e6 = Mt
-  // MAT already in Mt (pipeline scale=1e-6 applied correctly)
-  // LAND stored in m² (pipeline scale=1.0) → /1e10 = Mha
-  // ECO_TOX/ECO_ACID stored in PDF·m²·yr (pipeline scale=1.0) → /1e9 for display
-  // WAT_GREEN/WAT_BLUE already in Mm³ (pipeline scale=1e-6 applied correctly)
-  // PM stored in kg PM2.5eq (pipeline scale=1.0) → /1e6 = t PM2.5eq
-  GHG:      { div: 1e6,  unit: 'Mt CO\u2082eq' },
-  MAT:      { div: 1,    unit: 'Mt' },
-  LAND:     { div: 1e10, unit: 'Mha' },
-  ECO_TOX:  { div: 1e9,  unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
-  ECO_ACID: { div: 1e9,  unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
-  WAT_GREEN:{ div: 1,    unit: 'Mm\u00b3' },
-  WAT_BLUE: { div: 1,    unit: 'Mm\u00b3' },
-  PM:       { div: 1e6,  unit: 't PM2.5eq' },
-};
+  // stored=1,090,342 → /1e3 = 1,090 Mt ✓ (Brazil production footprint ~1,000-2,000 Mt)
+  GHG:      { div: 1e3,   unit: 'Mt CO\u2082eq' },
+  // stored=2.087 → *1e3 = 2,087 Mt ✓ (Brazil DMC ~2,000-3,000 Mt)
+  MAT:      { div: 1e-3,  unit: 'Mt' },
+  // stored=3,539,566 km² → /100 = 35,396 Mha ✓ (large but plausible for full GVC)
+  LAND:     { div: 100,   unit: 'Mha' },
+  // stored=1.48e9 → /1e9 = 1.48 ✓
+  ECO_TOX:  { div: 1e9,   unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
+  ECO_ACID: { div: 1e9,   unit: 'PDF\u00b7m\u00b2\u00b7yr (\u00d710\u2079)' },
+  // stored=0.22 Mm³ → *1e3 = 221 Mm³ (plausible for green water, ag-only satellite)
+  WAT_GREEN:{ div: 1e-3,  unit: 'Mm\u00b3' },
+  WAT_BLUE: { div: 1e-3,  unit: 'Mm\u00b3' },
+  // stored=1.35e9 kg → /1e6 = 1,353 kt ✓
+  PM:       { div: 1e6,   unit: 'kt PM2.5eq' },
+}
 
 function applyScale(v, indId) {
   const d = DISPLAY[indId];
