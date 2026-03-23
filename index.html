@@ -1292,123 +1292,184 @@ function renderMap() {
   }).catch(e => console.error('Map load error:', e));
 }
 
+// Geographic centroids for EXIOBASE countries (lon, lat)
+const COUNTRY_CENTROIDS = {
+  AT:[14.5,47.5], BE:[4.5,50.5], BG:[25.5,42.7], CY:[33.0,35.0], CZ:[15.5,49.8],
+  DE:[10.5,51.2], DK:[10.0,56.0], EE:[25.0,58.7], ES:[-3.7,40.4], FI:[26.0,64.0],
+  FR:[2.3,46.6],  GB:[-1.5,52.5], GR:[22.0,39.0], HR:[15.5,45.1], HU:[19.5,47.2],
+  IE:[-8.0,53.0], IT:[12.6,42.5], LT:[24.0,55.9], LU:[6.1,49.8],  LV:[25.0,57.0],
+  MT:[14.4,35.9], NL:[5.3,52.1],  PL:[20.0,52.0], PT:[-8.0,39.5], RO:[25.0,45.8],
+  SE:[18.0,62.0], SI:[14.8,46.2], SK:[19.3,48.7],
+  AU:[134.0,-25.0], BR:[-51.9,-14.2], CA:[-96.8,60.0], CH:[8.2,46.8],
+  CN:[104.2,35.9],  ID:[117.7,-0.8],  IN:[78.9,20.6],  JP:[138.3,36.2],
+  KR:[127.8,36.5],  MX:[-102.6,23.6], NO:[10.7,60.5],  RU:[99.0,61.0],
+  TW:[121.0,23.7],  TR:[35.2,39.0],   US:[-98.6,39.8],  ZA:[25.1,-29.0],
+  WL:[-65.0,-15.0], WA:[20.0,5.0], WE:[28.0,52.0], WM:[45.0,25.0], WF:[110.0,10.0],
+};
+
 function drawHalfMap(side, flows, ctryKey, col, topo) {
   const svgEl = document.getElementById(`map-${side}-svg`);
   const rect   = svgEl.getBoundingClientRect();
-  const W = rect.width  || 600;
-  const H = rect.height || 320;
+  const W = rect.width  || 580;
+  const H = rect.height || 300;
 
-  // Aggregate by country code
+  // Aggregate flows by country
   const byCountry = {};
   const total = flows.reduce((s, f) => s + f.val, 0) || 1;
-  flows.forEach(f => {
-    const c = f[ctryKey];
-    byCountry[c] = (byCountry[c] || 0) + f.val;
-  });
+  flows.forEach(f => { byCountry[f[ctryKey]] = (byCountry[f[ctryKey]] || 0) + f.val; });
 
-  // pct map: EXIOBASE code → share (0-1)
   const pctMap = {};
-  Object.entries(byCountry).forEach(([code, val]) => {
-    pctMap[code] = val / total;
-  });
+  Object.entries(byCountry).forEach(([code, val]) => { pctMap[code] = val / total; });
   const maxPct = Math.max(...Object.values(pctMap), 0.001);
 
-  // Color scale: white → indicator color (independent scale per half)
   function getColor(pct) {
-    if (!pct) return null;
-    const t = pct / maxPct;
-    return d3.interpolateRgb('#f0ede8', col)(t);
+    return d3.interpolateRgb('#ede9e2', col)(pct / maxPct);
   }
 
-  // ISO numeric → EXIOBASE code lookup
   const isoToExio = {};
   Object.entries(EXIO_TO_ISO).forEach(([exio, iso]) => { isoToExio[iso] = exio; });
 
-  // RoW: assign each RoW region a pct
   const rowPct = {};
   Object.entries(ROW_ISO_CLEAN).forEach(([rowCode, isoList]) => {
-    if (pctMap[rowCode]) {
-      isoList.forEach(iso => { rowPct[iso] = pctMap[rowCode] / isoList.length; });
-    }
+    if (pctMap[rowCode]) isoList.forEach(iso => { rowPct[iso] = pctMap[rowCode] / isoList.length; });
   });
 
-  // D3 projection — Natural Earth, no Antarctica
-  const projection = d3.geoNaturalEarth1()
-    .scale(W / 6.5)
-    .translate([W / 2, H / 2]);
-  const path = d3.geoPath(projection);
+  const projection = d3.geoNaturalEarth1().scale(W / 6.5).translate([W / 2, H / 2]);
+  const pathGen = d3.geoPath(projection);
 
   const features = topojson.feature(topo, topo.objects.countries).features
-    .filter(f => +f.id !== 10); // remove Antarctica (ISO 10)
+    .filter(f => +f.id !== 10);
 
-  const producing = EXIO_TO_ISO[S.country];
+  const producingISO = EXIO_TO_ISO[S.country];
+  const producingFeature = features.find(f => +f.id === producingISO);
+  const producingCentroid = producingFeature
+    ? pathGen.centroid(producingFeature)
+    : (COUNTRY_CENTROIDS[S.country] ? projection(COUNTRY_CENTROIDS[S.country]) : null);
 
-  // Build SVG
   const svg = d3.select(svgEl);
   svg.selectAll('*').remove();
   svg.attr('viewBox', `0 0 ${W} ${H}`);
 
-  // Graticule (subtle)
-  svg.append('path')
-    .datum(d3.geoGraticule()())
-    .attr('d', path)
-    .attr('fill', 'none')
-    .attr('stroke', 'var(--border)')
-    .attr('stroke-width', 0.3);
+  // Arrow marker
+  svg.append('defs').append('marker')
+    .attr('id', `arr-${side}`)
+    .attr('viewBox', '0 0 10 10').attr('refX', 8).attr('refY', 5)
+    .attr('markerWidth', 4).attr('markerHeight', 4).attr('orient', 'auto-start-reverse')
+    .append('path').attr('d', 'M2,1 L8,5 L2,9')
+    .attr('fill', 'none').attr('stroke', col)
+    .attr('stroke-width', 1.5).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
 
-  // Countries
-  const paths = svg.selectAll('path.country')
-    .data(features)
-    .join('path')
-    .attr('class', 'country')
-    .attr('d', path)
-    .attr('stroke', 'var(--bg)')
-    .attr('stroke-width', 0.4)
+  // Graticule
+  svg.append('path').datum(d3.geoGraticule()()).attr('d', pathGen)
+    .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.25);
+
+  // Country fills
+  svg.selectAll('path.country').data(features).join('path')
+    .attr('class', 'country').attr('d', pathGen)
+    .attr('stroke', 'var(--bg)').attr('stroke-width', 0.4)
     .attr('fill', d => {
-      const isoNum = +d.id;
-      const exio   = isoToExio[isoNum];
-      // Producing country: distinct highlight
-      if (isoNum === producing) return col;
-      // EXIOBASE country with data
-      if (exio && pctMap[exio]) return getColor(pctMap[exio]);
-      // RoW country
-      if (rowPct[isoNum]) return getColor(rowPct[isoNum]);
+      const n = +d.id; const e = isoToExio[n];
+      if (n === producingISO) return col;
+      if (e && pctMap[e])    return getColor(pctMap[e]);
+      if (rowPct[n])          return getColor(rowPct[n]);
       return 'var(--bg3)';
     })
-    .attr('opacity', d => +d.id === producing ? 1 : 0.85)
+    .attr('opacity', d => +d.id === producingISO ? 1.0 : 0.82)
     .style('cursor', 'pointer')
     .on('mousemove', (event, d) => {
-      const isoNum = +d.id;
-      const exio   = isoToExio[isoNum];
-      const name   = exio ? (getCountryName(exio) || exio) : '';
+      const n = +d.id; const e = isoToExio[n];
+      const name = e ? getCountryName(e) : null;
       if (!name) return;
-      const pct    = exio ? (pctMap[exio] || 0) : (rowPct[isoNum] || 0);
-      const div    = DISPLAY[S.indicator]?.div || 1;
-      const val    = exio ? ((byCountry[exio] || 0) / div) : 0;
-      const unit   = displayUnit(S.indicator);
-      const tt = document.getElementById('map-tooltip');
-      document.getElementById('map-tt-title').textContent = name + (isoNum === producing ? ' ★ producing' : '');
+      const pct = pctMap[e] || 0;
+      const val = (byCountry[e] || 0) / (DISPLAY[S.indicator]?.div || 1);
+      const tt  = document.getElementById('map-tooltip');
+      document.getElementById('map-tt-title').textContent = name + (n === producingISO ? ' ★' : '');
       document.getElementById('map-tt-val').textContent   =
-        pct > 0 ? `${(pct*100).toFixed(1)}% · ${fmtVal(val)} ${unit}` : 'no data';
+        pct > 0 ? `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}` : 'no flow data';
       tt.style.left = (event.clientX + 12) + 'px';
       tt.style.top  = (event.clientY - 10) + 'px';
       tt.classList.add('show');
     })
-    .on('mouseleave', () => {
-      document.getElementById('map-tooltip').classList.remove('show');
-    });
+    .on('mouseleave', () => document.getElementById('map-tooltip').classList.remove('show'));
 
-  // Legend gradient
-  const legendCanvas = document.getElementById(`map-${side}-legend-bar`);
-  legendCanvas.width  = legendCanvas.offsetWidth || 200;
-  legendCanvas.height = 6;
-  const ctx = legendCanvas.getContext('2d');
-  const grd = ctx.createLinearGradient(0, 0, legendCanvas.width, 0);
-  grd.addColorStop(0, '#f0ede8');
-  grd.addColorStop(1, col);
-  ctx.fillStyle = grd;
-  ctx.fillRect(0, 0, legendCanvas.width, 6);
-  document.getElementById(`map-${side}-legend-max`).textContent = `${(maxPct * 100).toFixed(1)}%`;
+  // ── Flow arrows ─────────────────────────────────────────────────────────
+  if (producingCentroid) {
+    const arrowLayer = svg.append('g');
+    const sortedFlows = Object.entries(pctMap).sort((a,b)=>b[1]-a[1]).slice(0,12);
+
+    sortedFlows.forEach(([code, pct]) => {
+      if (code === S.country) return;
+      const lonlat = COUNTRY_CENTROIDS[code];
+      if (!lonlat) return;
+      const targetPt = projection(lonlat);
+      if (!targetPt) return;
+
+      const [px, py] = producingCentroid;
+      const [tx, ty] = targetPt;
+
+      // Curved path control point
+      const mx = (px + tx) / 2;
+      const my = (py + ty) / 2;
+      const dx = tx - px; const dy = ty - py;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const off = Math.min(len * 0.18, 35);
+      const cpx = mx - (dy / len) * off;
+      const cpy = my + (dx / len) * off;
+
+      // Arrow direction: inward for upstream, outward for downstream
+      const shorten = 14;
+      let ax1 = side === 'up' ? tx : px;
+      let ay1 = side === 'up' ? ty : py;
+      let ax2 = side === 'up' ? px : tx;
+      let ay2 = side === 'up' ? py : ty;
+
+      // Shorten endpoints
+      const adx = ax2 - ax1; const ady = ay2 - ay1;
+      const alen = Math.sqrt(adx*adx + ady*ady) || 1;
+      const sx1 = ax1 + (adx/alen)*shorten;
+      const sy1 = ay1 + (ady/alen)*shorten;
+      const sx2 = ax2 - (adx/alen)*shorten;
+      const sy2 = ay2 - (ady/alen)*shorten;
+
+      const sw = Math.max(1.5, pct / maxPct * 7);
+
+      arrowLayer.append('path')
+        .attr('d', `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`)
+        .attr('fill', 'none').attr('stroke', col)
+        .attr('stroke-width', sw).attr('stroke-opacity', 0.55)
+        .attr('marker-end', `url(#arr-${side})`);
+    });
+  }
+
+  // Producing country outline ring
+  if (producingFeature) {
+    svg.append('path').datum(producingFeature).attr('d', pathGen)
+      .attr('fill', 'none').attr('stroke', col).attr('stroke-width', 1.5);
+  }
+
+  // Producing country centroid dot
+  if (producingCentroid) {
+    svg.append('circle')
+      .attr('cx', producingCentroid[0]).attr('cy', producingCentroid[1])
+      .attr('r', 5).attr('fill', col).attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
+  }
+
+  // UN disclaimer
+  svg.append('text').attr('x', W - 4).attr('y', H - 4)
+    .attr('text-anchor', 'end').attr('font-size', '6')
+    .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink3)')
+    .text('The designations used do not imply official endorsement by the United Nations.');
+
+  // Legend
+  const lc = document.getElementById(`map-${side}-legend-bar`);
+  if (lc) {
+    lc.width = lc.offsetWidth || 160; lc.height = 6;
+    const ctx = lc.getContext('2d');
+    const grd = ctx.createLinearGradient(0, 0, lc.width, 0);
+    grd.addColorStop(0, '#ede9e2'); grd.addColorStop(1, col);
+    ctx.fillStyle = grd; ctx.fillRect(0, 0, lc.width, 6);
+    document.getElementById(`map-${side}-legend-max`).textContent = `${(maxPct*100).toFixed(1)}%`;
+  }
 }
 
 function renderMapCenterPanel(secData, col) {
