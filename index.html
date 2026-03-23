@@ -411,6 +411,84 @@ select:focus { outline: none; border-color: var(--ink); }
 @media (max-width: 900px) {
   .canvas { grid-template-columns: 1fr 20px 1fr 20px 1fr 1px 140px; }
 }
+
+/* ── VIEW TOGGLE (Sankey / Map) ──────────────────────────────── */
+.view-mode-toggle {
+  display: flex; gap: 3px; margin-left: 8px;
+}
+.vmt {
+  padding: 4px 10px; font-size: 9px; font-family: var(--font-mono);
+  border: 1px solid var(--border2); border-radius: 14px;
+  cursor: pointer; background: transparent; color: var(--ink2);
+  transition: all 0.12s; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.vmt:hover { background: var(--bg2); }
+.vmt.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* ── MAP CANVAS ──────────────────────────────────────────────── */
+.map-canvas {
+  display: none;
+  flex: 1; min-height: 0;
+  position: relative;
+}
+.map-canvas.active { display: flex; }
+
+.map-half {
+  flex: 1; position: relative;
+  display: flex; flex-direction: column;
+}
+.map-half-label {
+  font-size: 8px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--ink3); padding: 8px 14px 4px;
+  flex-shrink: 0;
+}
+.map-half svg {
+  flex: 1; width: 100%; min-height: 0;
+  display: block;
+}
+.map-divider {
+  width: 1px; background: var(--border); flex-shrink: 0;
+  align-self: stretch; margin: 10px 0;
+}
+.map-center-panel {
+  width: 160px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 12px 8px; gap: 6px;
+  border-left: 1px solid var(--border);
+}
+.map-legend {
+  width: 100%; padding: 0 14px 8px;
+  flex-shrink: 0;
+}
+.map-legend-title {
+  font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--ink3);
+  margin-bottom: 4px;
+}
+.map-legend-bar {
+  height: 6px; border-radius: 3px;
+  width: 100%;
+}
+.map-legend-labels {
+  display: flex; justify-content: space-between;
+  font-size: 8px; color: var(--ink3); margin-top: 2px;
+}
+.map-tooltip {
+  position: fixed;
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 10px; line-height: 1.5;
+  pointer-events: none; opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 50; max-width: 200px;
+  font-family: var(--font-mono);
+}
+.map-tooltip.show { opacity: 1; }
+.map-tt-title { font-weight: 500; margin-bottom: 2px; }
+.map-tt-val { opacity: 0.7; font-size: 9px; }
 </style>
 </head>
 <body>
@@ -442,6 +520,10 @@ select:focus { outline: none; border-color: var(--ink); }
         <div class="ind-row" id="ind-row"></div>
       </div>
       <button class="reset-btn" onclick="doReset()">↺ reset</button>
+      <div class="view-mode-toggle">
+        <button class="vmt on" id="vmt-sankey" onclick="setViewMode('sankey')">⬡ Sankey</button>
+        <button class="vmt" id="vmt-map" onclick="setViewMode('map')">⊕ Map</button>
+      </div>
     </div>
   </div>
 
@@ -513,6 +595,38 @@ select:focus { outline: none; border-color: var(--ink); }
 
     <!-- rank panel -->
     <div class="rank-panel" id="rank-panel"></div>
+  </div>
+
+  <!-- Map canvas (hidden until map mode activated) -->
+  <div class="map-canvas" id="map-canvas">
+    <div class="map-half" id="map-up-half">
+      <div class="map-half-label" id="map-up-label">Upstream origins</div>
+      <svg id="map-up-svg"></svg>
+      <div class="map-legend" id="map-up-legend">
+        <div class="map-legend-title">Share of embodied impact</div>
+        <canvas class="map-legend-bar" id="map-up-legend-bar" height="6"></canvas>
+        <div class="map-legend-labels"><span>0%</span><span id="map-up-legend-max"></span></div>
+      </div>
+    </div>
+    <div class="map-divider"></div>
+    <div class="map-half" id="map-dn-half">
+      <div class="map-half-label" id="map-dn-label">Downstream destinations</div>
+      <svg id="map-dn-svg"></svg>
+      <div class="map-legend" id="map-dn-legend">
+        <div class="map-legend-title">Share of output received</div>
+        <canvas class="map-legend-bar" id="map-dn-legend-bar" height="6"></canvas>
+        <div class="map-legend-labels"><span>0%</span><span id="map-dn-legend-max"></span></div>
+      </div>
+    </div>
+    <div class="map-center-panel" id="map-center-panel">
+      <!-- filled by renderMapCenterPanel() -->
+    </div>
+  </div>
+
+  <!-- Map tooltip -->
+  <div class="map-tooltip" id="map-tooltip">
+    <div class="map-tt-title" id="map-tt-title"></div>
+    <div class="map-tt-val" id="map-tt-val"></div>
   </div>
 
   <!-- Footnote -->
@@ -861,7 +975,10 @@ function render() {
     renderFootnote(secData, indMeta);
 
     // Draw connectors after DOM settles
-    requestAnimationFrame(() => drawConnectors(col));
+    requestAnimationFrame(() => {
+      drawConnectors(col);
+      if (typeof S.viewMode !== 'undefined' && S.viewMode === 'map') renderMap();
+    });
 
   } catch(e) {
     console.error(e);
@@ -1106,6 +1223,7 @@ window.addEventListener('resize', () => {
   resizeTimer = setTimeout(() => {
     const col = IND_COLOR[S.indicator]||'#888';
     drawConnectors(col);
+    if (S.viewMode === 'map') renderMap();
   }, 100);
 });
 
@@ -1114,6 +1232,208 @@ window.addEventListener('resize', () => {
 // =============================================================================
 
 init();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+// =============================================================================
+// MAP VIEW
+// =============================================================================
+
+// EXIOBASE country code → ISO numeric (for world-atlas topology matching)
+const EXIO_TO_ISO = {
+  AT:40, BE:56, BG:100, CY:196, CZ:203, DE:276, DK:208, EE:233, ES:724,
+  FI:246, FR:250, GB:826, GR:300, HR:191, HU:348, IE:372, IT:380, LT:440,
+  LU:442, LV:428, MT:470, NL:528, PL:616, PT:620, RO:642, SE:752, SI:705,
+  SK:703, AU:36, BR:76, CA:124, CH:756, CN:156, ID:360, IN:356, JP:392,
+  KR:410, MX:484, NO:578, RU:643, TW:158, TR:792, US:840, ZA:710,
+};
+
+// RoW region → approximate ISO numeric member countries
+const ROW_ISO_CLEAN = {
+  WL: [32,68,152,170,188,214,218,222,320,332,340,388,558,591,600,604,630,740,858,862],
+  WA: [12,24,204,72,108,120,140,148,174,178,180,262,266,288,324,384,404,426,430,434,450,454,466,478,480,508,516,562,566,646,678,686,694,706,716,728,729,800,834,894],
+  WE: [8,20,31,51,112,498,807,688,804],
+  WM: [4,48,64,104,116,144,364,368,400,414,422,462,512,634,682,760,784,887,275],
+  WF: [96,418,458,496,524,598,608,626,704],
+};
+
+let worldTopo = null;
+
+async function loadWorldTopo() {
+  if (worldTopo) return worldTopo;
+  const resp = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+  worldTopo = await resp.json();
+  return worldTopo;
+}
+
+function setViewMode(mode) {
+  S.viewMode = mode;
+  document.getElementById('vmt-sankey').classList.toggle('on', mode === 'sankey');
+  document.getElementById('vmt-map').classList.toggle('on', mode === 'map');
+  document.getElementById('canvas').style.display      = mode === 'sankey' ? 'grid' : 'none';
+  document.getElementById('map-canvas').classList.toggle('active', mode === 'map');
+  if (mode === 'map') renderMap();
+}
+
+function renderMap() {
+  const cdata = CACHE[S.country];
+  if (!cdata) return;
+  const indData = cdata.data[S.indicator];
+  if (!indData) return;
+  const secData = indData[S.sector];
+  if (!secData) return;
+  const col = IND_COLOR[S.indicator] || '#888';
+
+  loadWorldTopo().then(topo => {
+    drawHalfMap('up',   secData.upstream,   'ctry', col, topo);
+    drawHalfMap('dn',   secData.downstream, 'ctry', col, topo);
+    renderMapCenterPanel(secData, col);
+  }).catch(e => console.error('Map load error:', e));
+}
+
+function drawHalfMap(side, flows, ctryKey, col, topo) {
+  const svgEl = document.getElementById(`map-${side}-svg`);
+  const rect   = svgEl.getBoundingClientRect();
+  const W = rect.width  || 600;
+  const H = rect.height || 320;
+
+  // Aggregate by country code
+  const byCountry = {};
+  const total = flows.reduce((s, f) => s + f.val, 0) || 1;
+  flows.forEach(f => {
+    const c = f[ctryKey];
+    byCountry[c] = (byCountry[c] || 0) + f.val;
+  });
+
+  // pct map: EXIOBASE code → share (0-1)
+  const pctMap = {};
+  Object.entries(byCountry).forEach(([code, val]) => {
+    pctMap[code] = val / total;
+  });
+  const maxPct = Math.max(...Object.values(pctMap), 0.001);
+
+  // Color scale: white → indicator color (independent scale per half)
+  function getColor(pct) {
+    if (!pct) return null;
+    const t = pct / maxPct;
+    return d3.interpolateRgb('#f0ede8', col)(t);
+  }
+
+  // ISO numeric → EXIOBASE code lookup
+  const isoToExio = {};
+  Object.entries(EXIO_TO_ISO).forEach(([exio, iso]) => { isoToExio[iso] = exio; });
+
+  // RoW: assign each RoW region a pct
+  const rowPct = {};
+  Object.entries(ROW_ISO_CLEAN).forEach(([rowCode, isoList]) => {
+    if (pctMap[rowCode]) {
+      isoList.forEach(iso => { rowPct[iso] = pctMap[rowCode] / isoList.length; });
+    }
+  });
+
+  // D3 projection — Natural Earth, no Antarctica
+  const projection = d3.geoNaturalEarth1()
+    .scale(W / 6.5)
+    .translate([W / 2, H / 2]);
+  const path = d3.geoPath(projection);
+
+  const features = topojson.feature(topo, topo.objects.countries).features
+    .filter(f => +f.id !== 10); // remove Antarctica (ISO 10)
+
+  const producing = EXIO_TO_ISO[S.country];
+
+  // Build SVG
+  const svg = d3.select(svgEl);
+  svg.selectAll('*').remove();
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+  // Graticule (subtle)
+  svg.append('path')
+    .datum(d3.geoGraticule()())
+    .attr('d', path)
+    .attr('fill', 'none')
+    .attr('stroke', 'var(--border)')
+    .attr('stroke-width', 0.3);
+
+  // Countries
+  const paths = svg.selectAll('path.country')
+    .data(features)
+    .join('path')
+    .attr('class', 'country')
+    .attr('d', path)
+    .attr('stroke', 'var(--bg)')
+    .attr('stroke-width', 0.4)
+    .attr('fill', d => {
+      const isoNum = +d.id;
+      const exio   = isoToExio[isoNum];
+      // Producing country: distinct highlight
+      if (isoNum === producing) return col;
+      // EXIOBASE country with data
+      if (exio && pctMap[exio]) return getColor(pctMap[exio]);
+      // RoW country
+      if (rowPct[isoNum]) return getColor(rowPct[isoNum]);
+      return 'var(--bg3)';
+    })
+    .attr('opacity', d => +d.id === producing ? 1 : 0.85)
+    .style('cursor', 'pointer')
+    .on('mousemove', (event, d) => {
+      const isoNum = +d.id;
+      const exio   = isoToExio[isoNum];
+      const name   = exio ? (getCountryName(exio) || exio) : '';
+      if (!name) return;
+      const pct    = exio ? (pctMap[exio] || 0) : (rowPct[isoNum] || 0);
+      const div    = DISPLAY[S.indicator]?.div || 1;
+      const val    = exio ? ((byCountry[exio] || 0) / div) : 0;
+      const unit   = displayUnit(S.indicator);
+      const tt = document.getElementById('map-tooltip');
+      document.getElementById('map-tt-title').textContent = name + (isoNum === producing ? ' ★ producing' : '');
+      document.getElementById('map-tt-val').textContent   =
+        pct > 0 ? `${(pct*100).toFixed(1)}% · ${fmtVal(val)} ${unit}` : 'no data';
+      tt.style.left = (event.clientX + 12) + 'px';
+      tt.style.top  = (event.clientY - 10) + 'px';
+      tt.classList.add('show');
+    })
+    .on('mouseleave', () => {
+      document.getElementById('map-tooltip').classList.remove('show');
+    });
+
+  // Legend gradient
+  const legendCanvas = document.getElementById(`map-${side}-legend-bar`);
+  legendCanvas.width  = legendCanvas.offsetWidth || 200;
+  legendCanvas.height = 6;
+  const ctx = legendCanvas.getContext('2d');
+  const grd = ctx.createLinearGradient(0, 0, legendCanvas.width, 0);
+  grd.addColorStop(0, '#f0ede8');
+  grd.addColorStop(1, col);
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, legendCanvas.width, 6);
+  document.getElementById(`map-${side}-legend-max`).textContent = `${(maxPct * 100).toFixed(1)}%`;
+}
+
+function renderMapCenterPanel(secData, col) {
+  const div    = DISPLAY[S.indicator]?.div || 1;
+  const unit   = displayUnit(S.indicator);
+  const scaled = applyScale(secData.total, S.indicator);
+  const indMeta = META?.indicators?.find(i => i.id === S.indicator);
+
+  document.getElementById('map-center-panel').innerHTML = `
+    <div style="text-align:center;line-height:1.4;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink3);margin-bottom:4px">Producing</div>
+      <div style="font-family:var(--font-serif);font-size:14px;font-weight:500;color:${col}">${getCountryName(S.country)}</div>
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin:4px 0 10px">${S.sector}</div>
+      <div style="font-family:var(--font-serif);font-size:22px;font-weight:300;color:${col};line-height:1">${fmtVal(scaled)}</div>
+      <div style="font-size:9px;color:var(--ink3);margin-top:2px">${unit}</div>
+      <div style="margin-top:12px;font-size:9px;color:var(--ink3)">${secData.direct_pct}% direct</div>
+      <div style="height:3px;background:var(--bg3);border-radius:2px;margin:4px 0;overflow:hidden">
+        <div style="height:100%;width:${secData.direct_pct}%;background:${col};border-radius:2px"></div>
+      </div>
+      <div style="font-size:8px;color:var(--ink3)">${100-secData.direct_pct}% embodied upstream</div>
+    </div>`;
+}
+
+// Extend S state and render
+S.viewMode = 'sankey';
 </script>
 </body>
 </html>
