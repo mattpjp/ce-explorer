@@ -1313,23 +1313,38 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   const W = rect.width  || 580;
   const H = rect.height || 300;
 
-  // ── Aggregate flows by country (multiple sectors → one entry per country) ──
+  // Aggregate ALL flows by country (summing across sectors)
   const byCountry = {};
   const total = flows.reduce((s, f) => s + f.val, 0) || 1;
   flows.forEach(f => { byCountry[f[ctryKey]] = (byCountry[f[ctryKey]] || 0) + f.val; });
 
-  // Sort by share descending, keep top 12 country-level flows
-  const sortedCountries = Object.entries(byCountry)
+  // Sort by share, top 12, EXCLUDING the producing country itself
+  // (domestic flows are noted in center panel, not shown as arrows)
+  const foreignFlows = Object.entries(byCountry)
+    .filter(([code]) => code !== S.country)
     .map(([code, val]) => ({ code, pct: val / total }))
     .sort((a, b) => b.pct - a.pct)
     .slice(0, 12);
 
-  const maxPct = sortedCountries[0]?.pct || 0.001;
+  const maxPct = foreignFlows[0]?.pct || 0.001;
+  const domesticPct = (byCountry[S.country] || 0) / total;
+
+  const ROW_LABELS = {
+    WA:'Rest of Africa', WE:'Rest of Europe',
+    WL:'Rest of Latin America', WM:'Rest of Middle East', WF:'Rest of Asia-Pacific'
+  };
+
+  // Short display name: use full name if ≤18 chars, else country code
+  function displayName(code) {
+    if (ROW_LABELS[code]) return ROW_LABELS[code];
+    const n = getCountryName(code) || code;
+    return n;
+  }
 
   const projection = d3.geoNaturalEarth1().scale(W / 6.5).translate([W / 2, H / 2]);
   const pathGen    = d3.geoPath(projection);
 
-  // Single merged land mass — no borders at all
+  // Single merged land mass — no country borders at all
   const landFeature = topojson.merge(topo, topo.objects.countries.geometries
     .filter(g => +g.id !== 10));
 
@@ -1344,37 +1359,23 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   svg.selectAll('*').remove();
   svg.attr('viewBox', `0 0 ${W} ${H}`);
 
-  // Arrow marker
-  svg.append('defs').append('marker')
-    .attr('id', `arr-${side}`)
-    .attr('viewBox', '0 0 10 10').attr('refX', 8).attr('refY', 5)
-    .attr('markerWidth', 4).attr('markerHeight', 4).attr('orient', 'auto-start-reverse')
-    .append('path').attr('d', 'M2,1 L8,5 L2,9')
-    .attr('fill', 'none').attr('stroke', col)
-    .attr('stroke-width', 1.5).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
-
   // Graticule
   svg.append('path').datum(d3.geoGraticule()()).attr('d', pathGen)
     .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.2);
 
-  // Land mass — no country borders
+  // Land mass — single shape, no borders
   svg.append('path').datum(landFeature).attr('d', pathGen)
     .attr('fill', 'var(--bg2)').attr('stroke', 'none');
 
   const arrowLayer = svg.append('g').attr('class', 'arrow-layer');
   const dotLayer   = svg.append('g').attr('class', 'dot-layer');
 
-  const ROW_LABELS = {
-    WA:'Rest of Africa', WE:'Rest of Europe',
-    WL:'Rest of Latin America', WM:'Rest of Middle East', WF:'Rest of Asia-Pacific'
-  };
-
+  // Tooltip helpers
   function showMapTip(event, code, pct) {
-    const isRow  = !!ROW_LABELS[code];
-    const name   = isRow ? ROW_LABELS[code] : (getCountryName(code) || code);
-    const val    = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
-    const tt     = document.getElementById('map-tooltip');
-    document.getElementById('map-tt-title').textContent = name + (code === S.country ? ' (domestic)' : '');
+    const name = displayName(code);
+    const val  = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
+    const tt   = document.getElementById('map-tooltip');
+    document.getElementById('map-tt-title').textContent = name;
     document.getElementById('map-tt-val').textContent   =
       `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}`;
     tt.style.left = (event.clientX + 12) + 'px';
@@ -1383,88 +1384,109 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   }
   function hideMapTip() { document.getElementById('map-tooltip').classList.remove('show'); }
 
+  // ── Draw flows (foreign only) ──────────────────────────────
   if (producingCentroid) {
-    sortedCountries.forEach(({ code, pct }, i) => {
-      const isDomestic = (code === S.country);
-      const lonlat     = COUNTRY_CENTROIDS[code];
+    const [px, py] = producingCentroid;
+
+    foreignFlows.forEach(({ code, pct }, i) => {
+      const lonlat = COUNTRY_CENTROIDS[code];
       if (!lonlat) return;
       const targetPt = projection(lonlat);
       if (!targetPt) return;
-
-      const [px, py] = producingCentroid;
       const [tx, ty] = targetPt;
 
-      // ── Arrow (non-domestic only) ──
-      if (!isDomestic) {
-        const mx2 = (px + tx) / 2, my2 = (py + ty) / 2;
-        const dx = tx - px, dy = ty - py;
-        const len = Math.sqrt(dx*dx + dy*dy) || 1;
-        const off = Math.min(len * 0.18, 35);
-        const cpx = mx2 - (dy / len) * off;
-        const cpy = my2 + (dx / len) * off;
+      // Curved arrow
+      const mx2 = (px + tx) / 2, my2 = (py + ty) / 2;
+      const dx = tx - px, dy = ty - py;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const off = Math.min(len * 0.18, 35);
+      const cpx = mx2 - (dy / len) * off;
+      const cpy = my2 + (dx / len) * off;
 
-        let ax1 = side === 'up' ? tx : px;
-        let ay1 = side === 'up' ? ty : py;
-        let ax2 = side === 'up' ? px : tx;
-        let ay2 = side === 'up' ? py : ty;
+      // Direction: inward for upstream, outward for downstream
+      const [ax1, ay1] = side === 'up' ? [tx, ty] : [px, py];
+      const [ax2, ay2] = side === 'up' ? [px, py] : [tx, ty];
 
-        const shorten = 10;
-        const adx = ax2 - ax1, ady = ay2 - ay1;
-        const alen = Math.sqrt(adx*adx + ady*ady) || 1;
-        const sx1 = ax1 + (adx/alen)*shorten;
-        const sy1 = ay1 + (ady/alen)*shorten;
-        const sx2 = ax2 - (adx/alen)*shorten;
-        const sy2 = ay2 - (ady/alen)*shorten;
+      // Shorten so tip lands just before the dot
+      const shorten = 10;
+      const adx = ax2 - ax1, ady = ay2 - ay1;
+      const alen = Math.sqrt(adx*adx + ady*ady) || 1;
+      const sx1 = ax1 + (adx/alen)*shorten;
+      const sy1 = ay1 + (ady/alen)*shorten;
+      const sx2 = ax2 - (adx/alen)*shorten;
+      const sy2 = ay2 - (ady/alen)*shorten;
 
-        // Square-root scaling: min 1.5px, max 9px
-        const sw = 1.5 + Math.sqrt(pct / maxPct) * 7.5;
-        const pathD = `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`;
+      // Square-root scaling: min 1.5px, max 8px
+      const sw = 1.5 + Math.sqrt(pct / maxPct) * 6.5;
+      const pathD = `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`;
 
-        // Wide invisible hit area
-        arrowLayer.append('path')
-          .attr('d', pathD).attr('fill', 'none')
-          .attr('stroke', 'transparent').attr('stroke-width', Math.max(sw + 8, 12))
-          .style('cursor', 'pointer')
-          .on('mousemove', e => showMapTip(e, code, pct))
-          .on('mouseleave', hideMapTip);
+      // Invisible wide hit area for hover
+      arrowLayer.append('path')
+        .attr('d', pathD).attr('fill', 'none')
+        .attr('stroke', 'transparent').attr('stroke-width', Math.max(sw + 8, 14))
+        .style('cursor', 'pointer')
+        .on('mousemove', e => showMapTip(e, code, pct))
+        .on('mouseleave', hideMapTip);
 
-        // Visible arrow
-        arrowLayer.append('path')
-          .attr('d', pathD).attr('fill', 'none').attr('stroke', col)
-          .attr('stroke-width', sw).attr('stroke-opacity', 0.55)
-          .attr('marker-end', `url(#arr-${side})`)
-          .attr('pointer-events', 'none');
-      }
+      // Visible line — arrowhead ONLY at the tip (marker-end)
+      arrowLayer.append('path')
+        .attr('d', pathD).attr('fill', 'none').attr('stroke', col)
+        .attr('stroke-width', sw).attr('stroke-opacity', 0.55)
+        .attr('stroke-linecap', 'round')
+        .attr('marker-end', `url(#tip-${side})`)
+        .attr('pointer-events', 'none');
 
-      // ── Dot ──
-      const r = Math.max(3, Math.sqrt(pct / maxPct) * 9);
+      // Dot at origin/destination
+      const r = Math.max(3, Math.sqrt(pct / maxPct) * 8);
       dotLayer.append('circle')
         .attr('cx', tx).attr('cy', ty).attr('r', r)
         .attr('fill', col)
-        .attr('fill-opacity', 0.35 + Math.sqrt(pct / maxPct) * 0.65)
+        .attr('fill-opacity', 0.3 + Math.sqrt(pct / maxPct) * 0.6)
         .attr('stroke', 'var(--bg)').attr('stroke-width', 1)
         .style('cursor', 'pointer')
         .on('mousemove', e => showMapTip(e, code, pct))
         .on('mouseleave', hideMapTip);
 
-      // ── Label (non-domestic, top 6) ──
-      if (i < 6 && !isDomestic) {
-        const isRow  = !!ROW_LABELS[code];
-        const name   = isRow ? ROW_LABELS[code] : (getCountryName(code) || code);
-        const label  = name.length > 16 ? code : name;
-        dotLayer.append('text')
-          .attr('x', tx).attr('y', ty - r - 3)
-          .attr('text-anchor', 'middle')
-          .attr('font-size', isRow ? '6' : '7')
-          .attr('font-family', 'var(--font-mono)')
-          .attr('fill', 'var(--ink2)')
-          .attr('pointer-events', 'none')
-          .text(label);
+      // Label for top 5
+      if (i < 5) {
+        const name  = displayName(code);
+        const isRow = !!ROW_LABELS[code];
+        // Wrap long names at spaces
+        const words = name.split(' ');
+        const line1 = words.slice(0, 2).join(' ');
+        const line2 = words.slice(2).join(' ');
+        const yBase = ty - r - (line2 ? 9 : 3);
+
+        if (line2) {
+          dotLayer.append('text').attr('x', tx).attr('y', yBase)
+            .attr('text-anchor', 'middle').attr('font-size', isRow ? '5.5' : '6.5')
+            .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
+            .attr('pointer-events', 'none').text(line1);
+          dotLayer.append('text').attr('x', tx).attr('y', yBase + 7)
+            .attr('text-anchor', 'middle').attr('font-size', isRow ? '5.5' : '6.5')
+            .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
+            .attr('pointer-events', 'none').text(line2);
+        } else {
+          dotLayer.append('text').attr('x', tx).attr('y', yBase)
+            .attr('text-anchor', 'middle').attr('font-size', isRow ? '5.5' : '6.5')
+            .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
+            .attr('pointer-events', 'none').text(line1);
+        }
       }
     });
   }
 
-  // ── Producing country: small clean dot + label ──
+  // ── Arrowhead marker — small triangle at tip only ──────────
+  const defs = svg.insert('defs', ':first-child');
+  defs.append('marker')
+    .attr('id', `tip-${side}`)
+    .attr('viewBox', '0 0 8 8').attr('refX', 7).attr('refY', 4)
+    .attr('markerWidth', 3.5).attr('markerHeight', 3.5)
+    .attr('orient', 'auto-start-reverse')
+    .append('path').attr('d', 'M0,0 L8,4 L0,8 Z')
+    .attr('fill', col).attr('fill-opacity', 0.7);
+
+  // ── Producing country: small dot + label only ──────────────
   if (producingCentroid) {
     const [px, py] = producingCentroid;
     dotLayer.append('circle')
@@ -1472,14 +1494,11 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       .attr('r', 5).attr('fill', col)
       .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5)
       .style('cursor', 'pointer')
-      .on('mousemove', e => {
-        const domesticEntry = sortedCountries.find(d => d.code === S.country);
-        showMapTip(e, S.country, domesticEntry?.pct || 0);
-      })
+      .on('mousemove', e => showMapTip(e, S.country, domesticPct))
       .on('mouseleave', hideMapTip);
     dotLayer.append('text')
       .attr('x', px).attr('y', py - 9)
-      .attr('text-anchor', 'middle').attr('font-size', '8')
+      .attr('text-anchor', 'middle').attr('font-size', '7.5')
       .attr('font-family', 'var(--font-mono)').attr('font-weight', '500')
       .attr('fill', col).attr('pointer-events', 'none')
       .text(getCountryName(S.country) || S.country);
@@ -1500,7 +1519,8 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     const grd = ctx.createLinearGradient(0, 0, lc.width, 0);
     grd.addColorStop(0, '#ede9e2'); grd.addColorStop(1, col);
     ctx.fillStyle = grd; ctx.fillRect(0, 0, lc.width, 6);
-    document.getElementById(`map-${side}-legend-max`).textContent = `${(maxPct*100).toFixed(1)}%`;
+    document.getElementById(`map-${side}-legend-max`).textContent =
+      foreignFlows.length ? `${(maxPct*100).toFixed(1)}%` : '0%';
   }
 }
 
