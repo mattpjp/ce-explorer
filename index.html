@@ -1516,19 +1516,16 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     }
 
     // Simple iterative repulsion: push overlapping labels apart
-    const ITERS = 18;
+    const ITERS = 25;
     for (let iter = 0; iter < ITERS; iter++) {
       for (let i = 0; i < labelBoxes.length; i++) {
         for (let j = i + 1; j < labelBoxes.length; j++) {
           const a = labelBoxes[i], b = labelBoxes[j];
-          const overlapX = (a.halfW + b.halfW) - Math.abs(a.cx - b.cx);
-          const overlapY = (a.halfH + b.halfH + 2) - Math.abs(a.cy - b.cy);
+          const overlapX = (a.halfW + b.halfW + 3) - Math.abs(a.cx - b.cx);
+          const overlapY = (a.halfH + b.halfH + 3) - Math.abs(a.cy - b.cy);
           if (overlapX > 0 && overlapY > 0) {
-            // Push the lower-priority label (higher index = lower priority)
-            // Only move b (lower priority); a stays (or is producing country)
-            const pushX = (b.cx > a.cx ? 1 : -1) * overlapX * 0.3;
-            const pushY = (b.cy > a.cy ? 1 : -1) * overlapY * 0.5;
-            // Prefer vertical push to keep labels above dots
+            const pushX = (b.cx > a.cx ? 1 : -1) * overlapX * 0.45;
+            const pushY = (b.cy > a.cy ? 1 : -1) * overlapY * 0.55;
             if (overlapY < overlapX) {
               b.cy += pushY;
             } else {
