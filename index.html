@@ -1384,6 +1384,8 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   }
   function hideMapTip() { document.getElementById('map-tooltip').classList.remove('show'); }
 
+  const labelItems = []; // collect labels for deferred collision-aware placement
+
   if (producingCentroid) {
     const [px, py] = producingCentroid;
 
@@ -1473,14 +1475,19 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
         .on('mousemove', e => showMapTip(e, code, pct))
         .on('mouseleave', hideMapTip);
 
-      // Label — show for ALL flows, wrapping long names
-      const name   = displayName(code);
-      const isRow  = !!ROW_LABELS[code];
-      const words  = name.split(' ');
-      const fs     = isRow ? 5.5 : 6.5;
-      const lineH  = fs + 1.5;
+      // Collect label info for deferred collision-aware drawing
+      labelItems.push({ code, tx, ty, r, pct });
+    });
 
-      // Split into lines of max ~14 chars
+    // ── Collision-aware label placement ──────────────────────
+    // Build label boxes: {cx, cy, lines, fs, lineH, halfW, halfH, ox, oy}
+    const CHAR_W = 3.7; // approx px per char at font-size 6.5
+    const labelBoxes = labelItems.map(({ code, tx, ty, r }) => {
+      const name  = displayName(code);
+      const isRow = !!ROW_LABELS[code];
+      const fs    = isRow ? 5.5 : 6.5;
+      const lineH = fs + 1.5;
+      const words = name.split(' ');
       const lines = [];
       let cur = '';
       words.forEach(w => {
@@ -1489,11 +1496,57 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
         } else { cur = (cur + ' ' + w).trim(); }
       });
       if (cur) lines.push(cur);
+      const maxLen = Math.max(...lines.map(l => l.length));
+      const halfW  = maxLen * CHAR_W * (fs / 6.5) / 2 + 2;
+      const halfH  = (lines.length * lineH) / 2;
+      // Natural anchor: centred above dot
+      const cx0 = tx;
+      const cy0 = ty - r - 3 - halfH;
+      return { code, tx, ty, r, fs, lineH, lines, halfW, halfH, cx: cx0, cy: cy0 };
+    });
 
-      const yBase = ty - r - 3 - (lines.length - 1) * lineH;
+    // Also include producing country label in collision set
+    if (producingCentroid) {
+      const [px, py] = producingCentroid;
+      const pname = getCountryName(S.country) || S.country;
+      const halfW = pname.length * CHAR_W * (7.5 / 6.5) / 2 + 2;
+      labelBoxes.push({ code: S.country, tx: px, ty: py, r: 6,
+        fs: 7.5, lineH: 9, lines: [pname], halfW, halfH: 4.5,
+        cx: px, cy: py - 10 - 4.5, isProd: true });
+    }
+
+    // Simple iterative repulsion: push overlapping labels apart
+    const ITERS = 18;
+    for (let iter = 0; iter < ITERS; iter++) {
+      for (let i = 0; i < labelBoxes.length; i++) {
+        for (let j = i + 1; j < labelBoxes.length; j++) {
+          const a = labelBoxes[i], b = labelBoxes[j];
+          const overlapX = (a.halfW + b.halfW) - Math.abs(a.cx - b.cx);
+          const overlapY = (a.halfH + b.halfH + 2) - Math.abs(a.cy - b.cy);
+          if (overlapX > 0 && overlapY > 0) {
+            // Push the lower-priority label (higher index = lower priority)
+            // Only move b (lower priority); a stays (or is producing country)
+            const pushX = (b.cx > a.cx ? 1 : -1) * overlapX * 0.3;
+            const pushY = (b.cy > a.cy ? 1 : -1) * overlapY * 0.5;
+            // Prefer vertical push to keep labels above dots
+            if (overlapY < overlapX) {
+              b.cy += pushY;
+            } else {
+              b.cx += pushX;
+              b.cy += pushY * 0.3;
+            }
+          }
+        }
+      }
+    }
+
+    // Draw labels at resolved positions
+    labelBoxes.forEach(({ code, tx, ty, r, fs, lineH, lines, halfW, halfH, cx, cy, isProd }) => {
+      if (isProd) return; // produced separately below
       lines.forEach((line, li) => {
+        const yPos = cy - halfH + li * lineH + fs; // top of box + line offset
         dotLayer.append('text')
-          .attr('x', tx).attr('y', yBase + li * lineH)
+          .attr('x', cx).attr('y', yPos)
           .attr('text-anchor', 'middle').attr('font-size', fs)
           .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
           .attr('pointer-events', 'none').text(line);
@@ -1512,8 +1565,11 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       .style('cursor', 'pointer')
       .on('mousemove', e => showMapTip(e, S.country, domesticPct))
       .on('mouseleave', hideMapTip);
+    // Use collision-resolved y position if available
+    const prodBox = labelBoxes.find(b => b.isProd);
+    const labelY  = prodBox ? (prodBox.cy + prodBox.halfH) : (py - 10);
     dotLayer.append('text')
-      .attr('x', px).attr('y', py - 10)
+      .attr('x', prodBox ? prodBox.cx : px).attr('y', labelY)
       .attr('text-anchor', 'middle').attr('font-size', '7.5')
       .attr('font-family', 'var(--font-mono)').attr('font-weight', '500')
       .attr('fill', col).attr('pointer-events', 'none')
