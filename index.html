@@ -1304,7 +1304,7 @@ const COUNTRY_CENTROIDS = {
   CN:[104.2,35.9],  ID:[117.7,-0.8],  IN:[78.9,20.6],  JP:[138.3,36.2],
   KR:[127.8,36.5],  MX:[-102.6,23.6], NO:[10.7,60.5],  RU:[99.0,61.0],
   TW:[121.0,23.7],  TR:[35.2,39.0],   US:[-98.6,39.8],  ZA:[25.1,-29.0],
-  WL:[-65.0,-15.0], WA:[20.0,5.0], WE:[28.0,52.0], WM:[45.0,25.0], WF:[110.0,10.0],
+  WL:[-70.0,-20.0], WA:[20.0,5.0], WE:[28.0,52.0], WM:[45.0,25.0], WF:[110.0,10.0],
 };
 
 function drawHalfMap(side, flows, ctryKey, col, topo) {
@@ -1479,10 +1479,12 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       labelItems.push({ code, tx, ty, r, pct });
     });
 
-    // ── Collision-aware label placement ──────────────────────
-    // Build label boxes: {cx, cy, lines, fs, lineH, halfW, halfH, ox, oy}
-    const CHAR_W = 3.7; // approx px per char at font-size 6.5
-    const labelBoxes = labelItems.map(({ code, tx, ty, r }) => {
+    // ── Collision-aware label placement deferred (see below) ──
+  } // end if(producingCentroid)
+
+  // Build label boxes outside producingCentroid scope so always accessible
+  const CHAR_W = 3.7;
+  const labelBoxes = labelItems.map(({ code, tx, ty, r }) => {
       const name  = displayName(code);
       const isRow = !!ROW_LABELS[code];
       const fs    = isRow ? 5.5 : 6.5;
@@ -1549,7 +1551,6 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
           .attr('pointer-events', 'none').text(line);
       });
     });
-  }
 
   // Producing country: ring + inner dot
   if (producingCentroid) {
