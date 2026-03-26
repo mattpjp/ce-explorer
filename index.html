@@ -1313,7 +1313,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   const W = rect.width  || 580;
   const H = rect.height || 300;
 
-  // Aggregate flows by country, including domestic (S.country itself)
+  // Aggregate flows by country
   const byCountry = {};
   const total = flows.reduce((s, f) => s + f.val, 0) || 1;
   flows.forEach(f => { byCountry[f[ctryKey]] = (byCountry[f[ctryKey]] || 0) + f.val; });
@@ -1322,17 +1322,8 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   Object.entries(byCountry).forEach(([code, val]) => { pctMap[code] = val / total; });
   const maxPct = Math.max(...Object.values(pctMap), 0.001);
 
-  function getColor(pct) {
-    return d3.interpolateRgb('#ede9e2', col)(pct / maxPct);
-  }
-
   const isoToExio = {};
   Object.entries(EXIO_TO_ISO).forEach(([exio, iso]) => { isoToExio[iso] = exio; });
-
-  const rowPct = {};
-  Object.entries(ROW_ISO_CLEAN).forEach(([rowCode, isoList]) => {
-    if (pctMap[rowCode]) isoList.forEach(iso => { rowPct[iso] = pctMap[rowCode] / isoList.length; });
-  });
 
   const projection = d3.geoNaturalEarth1().scale(W / 6.5).translate([W / 2, H / 2]);
   const pathGen    = d3.geoPath(projection);
@@ -1365,22 +1356,42 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   svg.append('path').datum(d3.geoGraticule()()).attr('d', pathGen)
     .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.2);
 
-  // Land mass
+  // Land mass — no country borders
   svg.append('path').datum(landFeature).attr('d', pathGen)
     .attr('fill', 'var(--bg2)').attr('stroke', 'none');
 
-  // ── Flow arrows (including domestic self-flows) ──────────────
+  // Sort flows, top 14, keep domestic
   const sortedFlows = Object.entries(pctMap)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 14);
 
-  const arrowLayer = svg.append('g');
-  const dotLayer   = svg.append('g');
+  const arrowLayer = svg.append('g').attr('class', 'arrow-layer');
+  const dotLayer   = svg.append('g').attr('class', 'dot-layer');
+
+  const ROW_LABELS = {
+    WA:'Rest of Africa', WE:'Rest of Europe',
+    WL:'Rest of Americas', WM:'Rest of Middle East & Asia', WF:'Rest of Asia-Pacific'
+  };
+
+  // ── Tooltip helper ───────────────────────────────────────────
+  function showMapTip(event, code, pct) {
+    const isRow  = !!ROW_LABELS[code];
+    const name   = isRow ? ROW_LABELS[code] : (getCountryName(code) || code);
+    const val    = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
+    const tt     = document.getElementById('map-tooltip');
+    document.getElementById('map-tt-title').textContent = name;
+    document.getElementById('map-tt-val').textContent   =
+      `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}`;
+    tt.style.left = (event.clientX + 12) + 'px';
+    tt.style.top  = (event.clientY - 10) + 'px';
+    tt.classList.add('show');
+  }
+  function hideMapTip() { document.getElementById('map-tooltip').classList.remove('show'); }
 
   if (producingCentroid) {
     sortedFlows.forEach(([code, pct], i) => {
       const isDomestic = (code === S.country);
-      const lonlat = COUNTRY_CENTROIDS[code];
+      const lonlat     = COUNTRY_CENTROIDS[code];
       if (!lonlat) return;
       const targetPt = projection(lonlat);
       if (!targetPt) return;
@@ -1388,7 +1399,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       const [px, py] = producingCentroid;
       const [tx, ty] = targetPt;
 
-      // Draw arrow only for non-domestic flows
+      // ── Arrow (non-domestic only) ──────────────────────────
       if (!isDomestic) {
         const mx = (px + tx) / 2, my = (py + ty) / 2;
         const dx = tx - px, dy = ty - py;
@@ -1397,6 +1408,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
         const cpx = mx - (dy / len) * off;
         const cpy = my + (dx / len) * off;
 
+        // Arrow direction: inward for upstream, outward for downstream
         let ax1 = side === 'up' ? tx : px;
         let ay1 = side === 'up' ? ty : py;
         let ax2 = side === 'up' ? px : tx;
@@ -1410,74 +1422,64 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
         const sx2 = ax2 - (adx/alen)*shorten;
         const sy2 = ay2 - (ady/alen)*shorten;
 
-        const sw = Math.max(1.2, pct / maxPct * 7);
+        // Square-root scaling: compresses the wide range,
+        // min 1.5px (small flows still visible), max 9px
+        const sw = 1.5 + Math.sqrt(pct / maxPct) * 7.5;
 
+        // Wider invisible hit area for hover
+        arrowLayer.append('path')
+          .attr('d', `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`)
+          .attr('fill', 'none').attr('stroke', 'transparent')
+          .attr('stroke-width', Math.max(sw + 6, 10))
+          .style('cursor', 'pointer')
+          .on('mousemove', e => showMapTip(e, code, pct))
+          .on('mouseleave', hideMapTip);
+
+        // Visible arrow
         arrowLayer.append('path')
           .attr('d', `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`)
           .attr('fill', 'none').attr('stroke', col)
-          .attr('stroke-width', sw).attr('stroke-opacity', 0.5)
-          .attr('marker-end', `url(#arr-${side})`);
+          .attr('stroke-width', sw).attr('stroke-opacity', 0.55)
+          .attr('marker-end', `url(#arr-${side})`)
+          .attr('pointer-events', 'none');
       }
 
-      // Draw dot for all flows including domestic
-      const r = isDomestic
-        ? Math.max(5, pct / maxPct * 12)  // larger dot for domestic
-        : Math.max(3, pct / maxPct * 10);
-      const opacity = 0.4 + pct / maxPct * 0.6;
-      const dotCol  = isDomestic ? col : col;
-      const strokeW = isDomestic ? 2 : 1;
-
+      // ── Dot ───────────────────────────────────────────────
+      const r = Math.max(3, Math.sqrt(pct / maxPct) * 9);
       dotLayer.append('circle')
         .attr('cx', tx).attr('cy', ty).attr('r', r)
-        .attr('fill', dotCol).attr('fill-opacity', opacity)
-        .attr('stroke', 'var(--bg)').attr('stroke-width', strokeW)
+        .attr('fill', col)
+        .attr('fill-opacity', 0.35 + Math.sqrt(pct / maxPct) * 0.65)
+        .attr('stroke', 'var(--bg)').attr('stroke-width', 1)
         .style('cursor', 'pointer')
-        .on('mousemove', event => {
-          const name = getCountryName(code) || code;
-          const val  = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
-          const tt   = document.getElementById('map-tooltip');
-          document.getElementById('map-tt-title').textContent =
-            name + (isDomestic ? ' (domestic)' : '');
-          document.getElementById('map-tt-val').textContent =
-            `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}`;
-          tt.style.left = (event.clientX + 12) + 'px';
-          tt.style.top  = (event.clientY - 10) + 'px';
-          tt.classList.add('show');
-        })
-        .on('mouseleave', () => document.getElementById('map-tooltip').classList.remove('show'));
+        .on('mousemove', e => showMapTip(e, code, pct))
+        .on('mouseleave', hideMapTip);
 
-      // Label for top 6 flows
-      if (i < 6) {
-        const name = getCountryName(code) || code;
-        // Use short name for long country names; use code for RoW
-        const isRow = ['WA','WE','WL','WM','WF'].includes(code);
-        const ROW_LABELS = { WA:'Rest of Africa', WE:'Rest of Europe', WL:'Rest of Americas', WM:'Rest of Middle East & Asia', WF:'Rest of Asia-Pacific' };
-        const label = isRow ? ROW_LABELS[code] : (name.length > 14 ? code : name);
+      // ── Label (top 6, no duplicate for producing country) ──
+      if (i < 6 && !isDomestic) {
+        const isRow  = !!ROW_LABELS[code];
+        const name   = isRow ? ROW_LABELS[code] : (getCountryName(code) || code);
+        const label  = name.length > 16 ? code : name;
         dotLayer.append('text')
           .attr('x', tx).attr('y', ty - r - 3)
-          .attr('text-anchor', 'middle').attr('font-size', isRow ? '6.5' : '7')
-          .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
+          .attr('text-anchor', 'middle')
+          .attr('font-size', isRow ? '6' : '7')
+          .attr('font-family', 'var(--font-mono)')
+          .attr('fill', 'var(--ink2)')
           .attr('pointer-events', 'none')
           .text(label);
       }
     });
   }
 
-  // ── RoW region labels (always shown if in top flows) ─────────
-  // Already handled above in the dot loop
-
-  // ── Producing country dot ────────────────────────────────────
+  // ── Producing country: simple dot + label only ───────────
   if (producingCentroid) {
-    svg.append('circle')
+    dotLayer.append('circle')
       .attr('cx', producingCentroid[0]).attr('cy', producingCentroid[1])
-      .attr('r', 10).attr('fill', 'none')
-      .attr('stroke', col).attr('stroke-width', 1.5).attr('stroke-opacity', 0.4);
-    svg.append('circle')
-      .attr('cx', producingCentroid[0]).attr('cy', producingCentroid[1])
-      .attr('r', 6).attr('fill', col)
-      .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
-    svg.append('text')
-      .attr('x', producingCentroid[0]).attr('y', producingCentroid[1] - 14)
+      .attr('r', 7).attr('fill', col)
+      .attr('stroke', 'var(--bg)').attr('stroke-width', 2);
+    dotLayer.append('text')
+      .attr('x', producingCentroid[0]).attr('y', producingCentroid[1] - 11)
       .attr('text-anchor', 'middle').attr('font-size', '8')
       .attr('font-family', 'var(--font-mono)').attr('font-weight', '500')
       .attr('fill', col).attr('pointer-events', 'none')
@@ -1488,6 +1490,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   svg.append('text').attr('x', W - 4).attr('y', H - 4)
     .attr('text-anchor', 'end').attr('font-size', '6')
     .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink3)')
+    .attr('pointer-events', 'none')
     .text('Map boundaries do not imply official endorsement by the United Nations.');
 
   // Legend
