@@ -1322,26 +1322,16 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   Object.entries(byCountry).forEach(([code, val]) => { pctMap[code] = val / total; });
   const maxPct = Math.max(...Object.values(pctMap), 0.001);
 
-  function getColor(pct) {
-    return d3.interpolateRgb('#ede9e2', col)(pct / maxPct);
-  }
-
-  const isoToExio = {};
-  Object.entries(EXIO_TO_ISO).forEach(([exio, iso]) => { isoToExio[iso] = exio; });
-
-  const rowPct = {};
-  Object.entries(ROW_ISO_CLEAN).forEach(([rowCode, isoList]) => {
-    if (pctMap[rowCode]) isoList.forEach(iso => { rowPct[iso] = pctMap[rowCode] / isoList.length; });
-  });
-
   const projection = d3.geoNaturalEarth1().scale(W / 6.5).translate([W / 2, H / 2]);
-  const pathGen = d3.geoPath(projection);
+  const pathGen    = d3.geoPath(projection);
 
-  const features = topojson.feature(topo, topo.objects.countries).features
-    .filter(f => +f.id !== 10);
+  // Land is rendered as a single merged shape — no country borders shown at all
+  const landFeature = topojson.merge(topo, topo.objects.countries.geometries
+    .filter(g => +g.id !== 10)); // exclude Antarctica
 
-  const producingISO = EXIO_TO_ISO[S.country];
-  const producingFeature = features.find(f => +f.id === producingISO);
+  const producingISO    = EXIO_TO_ISO[S.country];
+  const allFeatures     = topojson.feature(topo, topo.objects.countries).features;
+  const producingFeature = allFeatures.find(f => +f.id === producingISO);
   const producingCentroid = producingFeature
     ? pathGen.centroid(producingFeature)
     : (COUNTRY_CENTROIDS[S.country] ? projection(COUNTRY_CENTROIDS[S.country]) : null);
@@ -1350,7 +1340,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   svg.selectAll('*').remove();
   svg.attr('viewBox', `0 0 ${W} ${H}`);
 
-  // Arrow marker
+  // Arrow marker def
   svg.append('defs').append('marker')
     .attr('id', `arr-${side}`)
     .attr('viewBox', '0 0 10 10').attr('refX', 8).attr('refY', 5)
@@ -1359,46 +1349,24 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     .attr('fill', 'none').attr('stroke', col)
     .attr('stroke-width', 1.5).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
 
-  // Graticule
+  // Graticule (very subtle)
   svg.append('path').datum(d3.geoGraticule()()).attr('d', pathGen)
-    .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.25);
+    .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.2);
 
-  // Country fills
-  svg.selectAll('path.country').data(features).join('path')
-    .attr('class', 'country').attr('d', pathGen)
-    .attr('stroke', 'var(--bg)').attr('stroke-width', 0.4)
-    .attr('fill', d => {
-      const n = +d.id; const e = isoToExio[n];
-      if (n === producingISO) return col;
-      if (e && pctMap[e])    return getColor(pctMap[e]);
-      if (rowPct[n])          return getColor(rowPct[n]);
-      return 'var(--bg3)';
-    })
-    .attr('opacity', d => +d.id === producingISO ? 1.0 : 0.82)
-    .style('cursor', 'pointer')
-    .on('mousemove', (event, d) => {
-      const n = +d.id; const e = isoToExio[n];
-      const name = e ? getCountryName(e) : null;
-      if (!name) return;
-      const pct = pctMap[e] || 0;
-      const val = (byCountry[e] || 0) / (DISPLAY[S.indicator]?.div || 1);
-      const tt  = document.getElementById('map-tooltip');
-      document.getElementById('map-tt-title').textContent = name + (n === producingISO ? ' ★' : '');
-      document.getElementById('map-tt-val').textContent   =
-        pct > 0 ? `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}` : 'no flow data';
-      tt.style.left = (event.clientX + 12) + 'px';
-      tt.style.top  = (event.clientY - 10) + 'px';
-      tt.classList.add('show');
-    })
-    .on('mouseleave', () => document.getElementById('map-tooltip').classList.remove('show'));
+  // Single land mass — no borders
+  svg.append('path').datum(landFeature).attr('d', pathGen)
+    .attr('fill', 'var(--bg2)').attr('stroke', 'none');
 
-  // ── Flow arrows ─────────────────────────────────────────────────────────
+  // ── Flow arrows ──────────────────────────────────────────────
+  const sortedFlows = Object.entries(pctMap)
+    .filter(([code]) => code !== S.country)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12);
+
+  const arrowLayer = svg.append('g');
+
   if (producingCentroid) {
-    const arrowLayer = svg.append('g');
-    const sortedFlows = Object.entries(pctMap).sort((a,b)=>b[1]-a[1]).slice(0,12);
-
     sortedFlows.forEach(([code, pct]) => {
-      if (code === S.country) return;
       const lonlat = COUNTRY_CENTROIDS[code];
       if (!lonlat) return;
       const targetPt = projection(lonlat);
@@ -1407,58 +1375,111 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       const [px, py] = producingCentroid;
       const [tx, ty] = targetPt;
 
-      // Curved path control point
-      const mx = (px + tx) / 2;
-      const my = (py + ty) / 2;
-      const dx = tx - px; const dy = ty - py;
+      // Curved control point
+      const mx = (px + tx) / 2, my = (py + ty) / 2;
+      const dx = tx - px, dy = ty - py;
       const len = Math.sqrt(dx*dx + dy*dy) || 1;
       const off = Math.min(len * 0.18, 35);
       const cpx = mx - (dy / len) * off;
       const cpy = my + (dx / len) * off;
 
-      // Arrow direction: inward for upstream, outward for downstream
-      const shorten = 14;
+      // Direction: inward for upstream, outward for downstream
       let ax1 = side === 'up' ? tx : px;
       let ay1 = side === 'up' ? ty : py;
       let ax2 = side === 'up' ? px : tx;
       let ay2 = side === 'up' ? py : ty;
 
-      // Shorten endpoints
-      const adx = ax2 - ax1; const ady = ay2 - ay1;
+      // Shorten so arrow tip doesn't overlap the dot
+      const shorten = 10;
+      const adx = ax2 - ax1, ady = ay2 - ay1;
       const alen = Math.sqrt(adx*adx + ady*ady) || 1;
       const sx1 = ax1 + (adx/alen)*shorten;
       const sy1 = ay1 + (ady/alen)*shorten;
       const sx2 = ax2 - (adx/alen)*shorten;
       const sy2 = ay2 - (ady/alen)*shorten;
 
-      const sw = Math.max(1.5, pct / maxPct * 7);
+      const sw = Math.max(1.2, pct / maxPct * 7);
 
       arrowLayer.append('path')
         .attr('d', `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`)
         .attr('fill', 'none').attr('stroke', col)
-        .attr('stroke-width', sw).attr('stroke-opacity', 0.55)
+        .attr('stroke-width', sw).attr('stroke-opacity', 0.5)
         .attr('marker-end', `url(#arr-${side})`);
     });
   }
 
-  // Producing country outline ring
-  if (producingFeature) {
-    svg.append('path').datum(producingFeature).attr('d', pathGen)
-      .attr('fill', 'none').attr('stroke', col).attr('stroke-width', 1.5);
-  }
+  // ── Country dots (origins/destinations) ─────────────────────
+  // Draw a filled circle at each country centroid, sized by share
+  const dotLayer = svg.append('g');
 
-  // Producing country centroid dot
+  sortedFlows.forEach(([code, pct], i) => {
+    const lonlat = COUNTRY_CENTROIDS[code];
+    if (!lonlat) return;
+    const pt = projection(lonlat);
+    if (!pt) return;
+
+    const r = Math.max(3, pct / maxPct * 10);
+    const opacity = 0.4 + pct / maxPct * 0.6;
+
+    dotLayer.append('circle')
+      .attr('cx', pt[0]).attr('cy', pt[1]).attr('r', r)
+      .attr('fill', col).attr('fill-opacity', opacity)
+      .attr('stroke', 'var(--bg)').attr('stroke-width', 1)
+      .style('cursor', 'pointer')
+      .on('mousemove', event => {
+        const name = getCountryName(code) || code;
+        const val  = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
+        const tt   = document.getElementById('map-tooltip');
+        document.getElementById('map-tt-title').textContent = name;
+        document.getElementById('map-tt-val').textContent   =
+          `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}`;
+        tt.style.left = (event.clientX + 12) + 'px';
+        tt.style.top  = (event.clientY - 10) + 'px';
+        tt.classList.add('show');
+      })
+      .on('mouseleave', () => document.getElementById('map-tooltip').classList.remove('show'));
+
+    // Country label for top 5 flows
+    if (i < 5) {
+      const name = getCountryName(code) || code;
+      const shortName = name.length > 12 ? code : name;
+      dotLayer.append('text')
+        .attr('x', pt[0]).attr('y', pt[1] - r - 3)
+        .attr('text-anchor', 'middle').attr('font-size', '7')
+        .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
+        .attr('pointer-events', 'none')
+        .text(shortName);
+    }
+  });
+
+  // ── Producing country dot ────────────────────────────────────
   if (producingCentroid) {
+    // Pulse ring
     svg.append('circle')
       .attr('cx', producingCentroid[0]).attr('cy', producingCentroid[1])
-      .attr('r', 5).attr('fill', col).attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
+      .attr('r', 10).attr('fill', 'none')
+      .attr('stroke', col).attr('stroke-width', 1.5).attr('stroke-opacity', 0.4);
+    // Solid dot
+    svg.append('circle')
+      .attr('cx', producingCentroid[0]).attr('cy', producingCentroid[1])
+      .attr('r', 6).attr('fill', col)
+      .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
+    // Label
+    const pName = getCountryName(S.country) || S.country;
+    svg.append('text')
+      .attr('x', producingCentroid[0])
+      .attr('y', producingCentroid[1] - 14)
+      .attr('text-anchor', 'middle').attr('font-size', '8')
+      .attr('font-family', 'var(--font-mono)').attr('font-weight', '500')
+      .attr('fill', col).attr('pointer-events', 'none')
+      .text(pName);
   }
 
   // UN disclaimer
   svg.append('text').attr('x', W - 4).attr('y', H - 4)
     .attr('text-anchor', 'end').attr('font-size', '6')
     .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink3)')
-    .text('The designations used do not imply official endorsement by the United Nations.');
+    .text('Map boundaries do not imply official endorsement by the United Nations.');
 
   // Legend
   const lc = document.getElementById(`map-${side}-legend-bar`);
@@ -1466,7 +1487,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     lc.width = lc.offsetWidth || 160; lc.height = 6;
     const ctx = lc.getContext('2d');
     const grd = ctx.createLinearGradient(0, 0, lc.width, 0);
-    grd.addColorStop(0, '#ede9e2'); grd.addColorStop(1, col);
+    grd.addColorStop(0, 'var(--bg2)'); grd.addColorStop(1, col);
     ctx.fillStyle = grd; ctx.fillRect(0, 0, lc.width, 6);
     document.getElementById(`map-${side}-legend-max`).textContent = `${(maxPct*100).toFixed(1)}%`;
   }
