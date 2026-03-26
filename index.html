@@ -1359,6 +1359,17 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   svg.selectAll('*').remove();
   svg.attr('viewBox', `0 0 ${W} ${H}`);
 
+  // ── Defs (must be first so markers are available for arrows) ─
+  const defs = svg.append('defs');
+  const marker = defs.append('marker')
+    .attr('id', `tip-${side}`)
+    .attr('viewBox', '0 0 6 6').attr('refX', 5).attr('refY', 3)
+    .attr('markerWidth', 2.5).attr('markerHeight', 2.5)
+    .attr('orient', 'auto-start-reverse');
+  marker.append('path').attr('d', 'M0,0.5 L5,3 L0,5.5')
+    .attr('fill', 'none').attr('stroke', col)
+    .attr('stroke-width', 1.2).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
+
   // Graticule
   svg.append('path').datum(d3.geoGraticule()()).attr('d', pathGen)
     .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.2);
@@ -1437,7 +1448,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
         .attr('pointer-events', 'none');
 
       // Dot at origin/destination
-      const r = Math.max(3, Math.sqrt(pct / maxPct) * 8);
+      const r = Math.max(2.5, Math.sqrt(pct / maxPct) * 6);
       dotLayer.append('circle')
         .attr('cx', tx).attr('cy', ty).attr('r', r)
         .attr('fill', col)
@@ -1476,28 +1487,21 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     });
   }
 
-  // ── Arrowhead marker — small triangle at tip only ──────────
-  const defs = svg.insert('defs', ':first-child');
-  defs.append('marker')
-    .attr('id', `tip-${side}`)
-    .attr('viewBox', '0 0 8 8').attr('refX', 7).attr('refY', 4)
-    .attr('markerWidth', 3.5).attr('markerHeight', 3.5)
-    .attr('orient', 'auto-start-reverse')
-    .append('path').attr('d', 'M0,0 L8,4 L0,8 Z')
-    .attr('fill', col).attr('fill-opacity', 0.7);
-
-  // ── Producing country: small dot + label only ──────────────
+  // ── Producing country: crosshair dot + label ───────────────
   if (producingCentroid) {
     const [px, py] = producingCentroid;
-    dotLayer.append('circle')
-      .attr('cx', px).attr('cy', py)
-      .attr('r', 5).attr('fill', col)
-      .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5)
+    // Outer ring
+    dotLayer.append('circle').attr('cx', px).attr('cy', py)
+      .attr('r', 6).attr('fill', 'none')
+      .attr('stroke', col).attr('stroke-width', 1.5);
+    // Inner dot
+    dotLayer.append('circle').attr('cx', px).attr('cy', py)
+      .attr('r', 2.5).attr('fill', col)
       .style('cursor', 'pointer')
       .on('mousemove', e => showMapTip(e, S.country, domesticPct))
       .on('mouseleave', hideMapTip);
     dotLayer.append('text')
-      .attr('x', px).attr('y', py - 9)
+      .attr('x', px).attr('y', py - 10)
       .attr('text-anchor', 'middle').attr('font-size', '7.5')
       .attr('font-family', 'var(--font-mono)').attr('font-weight', '500')
       .attr('fill', col).attr('pointer-events', 'none')
