@@ -1313,13 +1313,12 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   const W = rect.width  || 580;
   const H = rect.height || 300;
 
-  // Aggregate ALL flows by country (summing across sectors)
+  // Aggregate ALL flows by country
   const byCountry = {};
   const total = flows.reduce((s, f) => s + f.val, 0) || 1;
   flows.forEach(f => { byCountry[f[ctryKey]] = (byCountry[f[ctryKey]] || 0) + f.val; });
 
-  // Sort by share, top 12, EXCLUDING the producing country itself
-  // (domestic flows are noted in center panel, not shown as arrows)
+  // Foreign flows only, top 12, sorted by share
   const foreignFlows = Object.entries(byCountry)
     .filter(([code]) => code !== S.country)
     .map(([code, val]) => ({ code, pct: val / total }))
@@ -1334,17 +1333,13 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     WL:'Rest of Latin America', WM:'Rest of Middle East', WF:'Rest of Asia-Pacific'
   };
 
-  // Short display name: use full name if ≤18 chars, else country code
   function displayName(code) {
-    if (ROW_LABELS[code]) return ROW_LABELS[code];
-    const n = getCountryName(code) || code;
-    return n;
+    return ROW_LABELS[code] || getCountryName(code) || code;
   }
 
   const projection = d3.geoNaturalEarth1().scale(W / 6.5).translate([W / 2, H / 2]);
   const pathGen    = d3.geoPath(projection);
 
-  // Single merged land mass — no country borders at all
   const landFeature = topojson.merge(topo, topo.objects.countries.geometries
     .filter(g => +g.id !== 10));
 
@@ -1359,35 +1354,29 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   svg.selectAll('*').remove();
   svg.attr('viewBox', `0 0 ${W} ${H}`);
 
-  // ── Defs (must be first so markers are available for arrows) ─
+  // Clip path so labels/dots don't overflow
   const defs = svg.append('defs');
-  const marker = defs.append('marker')
-    .attr('id', `tip-${side}`)
-    .attr('viewBox', '0 0 6 6').attr('refX', 5).attr('refY', 3)
-    .attr('markerWidth', 2.5).attr('markerHeight', 2.5)
-    .attr('orient', 'auto-start-reverse');
-  marker.append('path').attr('d', 'M0,0.5 L5,3 L0,5.5')
-    .attr('fill', 'none').attr('stroke', col)
-    .attr('stroke-width', 1.2).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
+  defs.append('clipPath').attr('id', `clip-${side}`)
+    .append('rect').attr('width', W).attr('height', H);
 
   // Graticule
   svg.append('path').datum(d3.geoGraticule()()).attr('d', pathGen)
     .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.2);
 
-  // Land mass — single shape, no borders
+  // Land mass
   svg.append('path').datum(landFeature).attr('d', pathGen)
     .attr('fill', 'var(--bg2)').attr('stroke', 'none');
 
-  const arrowLayer = svg.append('g').attr('class', 'arrow-layer');
-  const dotLayer   = svg.append('g').attr('class', 'dot-layer');
+  const arrowLayer = svg.append('g').attr('clip-path', `url(#clip-${side})`);
+  const dotLayer   = svg.append('g').attr('clip-path', `url(#clip-${side})`);
 
-  // Tooltip helpers
   function showMapTip(event, code, pct) {
     const name = displayName(code);
     const val  = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
     const tt   = document.getElementById('map-tooltip');
-    document.getElementById('map-tt-title').textContent = name;
-    document.getElementById('map-tt-val').textContent   =
+    document.getElementById('map-tt-title').textContent =
+      name + (code === S.country ? ' (domestic)' : '');
+    document.getElementById('map-tt-val').textContent =
       `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}`;
     tt.style.left = (event.clientX + 12) + 'px';
     tt.style.top  = (event.clientY - 10) + 'px';
@@ -1395,7 +1384,6 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   }
   function hideMapTip() { document.getElementById('map-tooltip').classList.remove('show'); }
 
-  // ── Draw flows (foreign only) ──────────────────────────────
   if (producingCentroid) {
     const [px, py] = producingCentroid;
 
@@ -1406,20 +1394,20 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       if (!targetPt) return;
       const [tx, ty] = targetPt;
 
-      // Curved arrow
+      // Quadratic bezier control point (slight curve)
       const mx2 = (px + tx) / 2, my2 = (py + ty) / 2;
       const dx = tx - px, dy = ty - py;
       const len = Math.sqrt(dx*dx + dy*dy) || 1;
-      const off = Math.min(len * 0.18, 35);
+      const off = Math.min(len * 0.15, 28);
       const cpx = mx2 - (dy / len) * off;
       const cpy = my2 + (dx / len) * off;
 
-      // Direction: inward for upstream, outward for downstream
+      // Direction: inward for upstream (origin→producing), outward for downstream
       const [ax1, ay1] = side === 'up' ? [tx, ty] : [px, py];
       const [ax2, ay2] = side === 'up' ? [px, py] : [tx, ty];
 
-      // Shorten so tip lands just before the dot
-      const shorten = 10;
+      // Shorten endpoints by ~8px so line doesn't overlap dots
+      const shorten = 8;
       const adx = ax2 - ax1, ady = ay2 - ay1;
       const alen = Math.sqrt(adx*adx + ady*ady) || 1;
       const sx1 = ax1 + (adx/alen)*shorten;
@@ -1427,74 +1415,98 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       const sx2 = ax2 - (adx/alen)*shorten;
       const sy2 = ay2 - (ady/alen)*shorten;
 
-      // Square-root scaling: min 1.5px, max 8px
-      const sw = 1.5 + Math.sqrt(pct / maxPct) * 6.5;
-      const pathD = `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`;
+      // Tapered line: wide at source, pointy at tip
+      // Achieved by drawing a filled polygon along the bezier path
+      const sw = 1.2 + Math.sqrt(pct / maxPct) * 6;  // base width
+      const nSeg = 20;  // bezier segments
 
-      // Invisible wide hit area for hover
+      // Compute bezier points
+      const pts = [];
+      for (let t = 0; t <= 1; t += 1/nSeg) {
+        const bx = (1-t)*(1-t)*sx1 + 2*(1-t)*t*cpx + t*t*sx2;
+        const by = (1-t)*(1-t)*sy1 + 2*(1-t)*t*cpy + t*t*sy2;
+        pts.push([bx, by]);
+      }
+      pts.push([sx2, sy2]);
+
+      // Build tapered polygon: left side forward, right side backward
+      const leftPts = [], rightPts = [];
+      pts.forEach(([bx, by], j) => {
+        const t = j / (pts.length - 1);
+        const w = (sw / 2) * (1 - t * 0.85); // taper from full to 15%
+        // Tangent at this point
+        const ni = Math.min(j + 1, pts.length - 1);
+        const tdx = pts[ni][0] - bx, tdy = pts[ni][1] - by;
+        const tlen = Math.sqrt(tdx*tdx + tdy*tdy) || 1;
+        const nx = -tdy/tlen, ny = tdx/tlen;
+        leftPts.push([bx + nx*w, by + ny*w]);
+        rightPts.unshift([bx - nx*w, by - ny*w]);
+      });
+
+      const polyPts = [...leftPts, ...rightPts];
+      const polyStr = polyPts.map(p => p.join(',')).join(' ');
+
+      // Wide hit area
       arrowLayer.append('path')
-        .attr('d', pathD).attr('fill', 'none')
-        .attr('stroke', 'transparent').attr('stroke-width', Math.max(sw + 8, 14))
+        .attr('d', `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`)
+        .attr('fill', 'none').attr('stroke', 'transparent')
+        .attr('stroke-width', sw + 10)
         .style('cursor', 'pointer')
         .on('mousemove', e => showMapTip(e, code, pct))
         .on('mouseleave', hideMapTip);
 
-      // Visible line — arrowhead ONLY at the tip (marker-end)
-      arrowLayer.append('path')
-        .attr('d', pathD).attr('fill', 'none').attr('stroke', col)
-        .attr('stroke-width', sw).attr('stroke-opacity', 0.55)
-        .attr('stroke-linecap', 'round')
-        .attr('marker-end', `url(#tip-${side})`)
+      // Tapered filled polygon
+      arrowLayer.append('polygon')
+        .attr('points', polyStr)
+        .attr('fill', col).attr('fill-opacity', 0.5)
+        .attr('stroke', 'none')
         .attr('pointer-events', 'none');
 
-      // Dot at origin/destination
-      const r = Math.max(2.5, Math.sqrt(pct / maxPct) * 6);
+      // Dot at origin/destination end
+      const r = Math.max(2.5, Math.sqrt(pct / maxPct) * 5.5);
       dotLayer.append('circle')
         .attr('cx', tx).attr('cy', ty).attr('r', r)
         .attr('fill', col)
-        .attr('fill-opacity', 0.3 + Math.sqrt(pct / maxPct) * 0.6)
-        .attr('stroke', 'var(--bg)').attr('stroke-width', 1)
+        .attr('fill-opacity', 0.35 + Math.sqrt(pct / maxPct) * 0.55)
+        .attr('stroke', 'var(--bg)').attr('stroke-width', 0.8)
         .style('cursor', 'pointer')
         .on('mousemove', e => showMapTip(e, code, pct))
         .on('mouseleave', hideMapTip);
 
-      // Label for top 5
-      if (i < 5) {
-        const name  = displayName(code);
-        const isRow = !!ROW_LABELS[code];
-        // Wrap long names at spaces
-        const words = name.split(' ');
-        const line1 = words.slice(0, 2).join(' ');
-        const line2 = words.slice(2).join(' ');
-        const yBase = ty - r - (line2 ? 9 : 3);
+      // Label — show for ALL flows, wrapping long names
+      const name   = displayName(code);
+      const isRow  = !!ROW_LABELS[code];
+      const words  = name.split(' ');
+      const fs     = isRow ? 5.5 : 6.5;
+      const lineH  = fs + 1.5;
 
-        if (line2) {
-          dotLayer.append('text').attr('x', tx).attr('y', yBase)
-            .attr('text-anchor', 'middle').attr('font-size', isRow ? '5.5' : '6.5')
-            .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
-            .attr('pointer-events', 'none').text(line1);
-          dotLayer.append('text').attr('x', tx).attr('y', yBase + 7)
-            .attr('text-anchor', 'middle').attr('font-size', isRow ? '5.5' : '6.5')
-            .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
-            .attr('pointer-events', 'none').text(line2);
-        } else {
-          dotLayer.append('text').attr('x', tx).attr('y', yBase)
-            .attr('text-anchor', 'middle').attr('font-size', isRow ? '5.5' : '6.5')
-            .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
-            .attr('pointer-events', 'none').text(line1);
-        }
-      }
+      // Split into lines of max ~14 chars
+      const lines = [];
+      let cur = '';
+      words.forEach(w => {
+        if ((cur + ' ' + w).trim().length > 14 && cur) {
+          lines.push(cur.trim()); cur = w;
+        } else { cur = (cur + ' ' + w).trim(); }
+      });
+      if (cur) lines.push(cur);
+
+      const yBase = ty - r - 3 - (lines.length - 1) * lineH;
+      lines.forEach((line, li) => {
+        dotLayer.append('text')
+          .attr('x', tx).attr('y', yBase + li * lineH)
+          .attr('text-anchor', 'middle').attr('font-size', fs)
+          .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
+          .attr('pointer-events', 'none').text(line);
+      });
     });
   }
 
-  // ── Producing country: crosshair dot + label ───────────────
+  // Producing country: ring + inner dot
   if (producingCentroid) {
     const [px, py] = producingCentroid;
-    // Outer ring
     dotLayer.append('circle').attr('cx', px).attr('cy', py)
       .attr('r', 6).attr('fill', 'none')
       .attr('stroke', col).attr('stroke-width', 1.5);
-    // Inner dot
     dotLayer.append('circle').attr('cx', px).attr('cy', py)
       .attr('r', 2.5).attr('fill', col)
       .style('cursor', 'pointer')
