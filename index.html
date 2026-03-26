@@ -1313,7 +1313,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   const W = rect.width  || 580;
   const H = rect.height || 300;
 
-  // Aggregate flows by country
+  // Aggregate flows by country, including domestic (S.country itself)
   const byCountry = {};
   const total = flows.reduce((s, f) => s + f.val, 0) || 1;
   flows.forEach(f => { byCountry[f[ctryKey]] = (byCountry[f[ctryKey]] || 0) + f.val; });
@@ -1322,15 +1322,27 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   Object.entries(byCountry).forEach(([code, val]) => { pctMap[code] = val / total; });
   const maxPct = Math.max(...Object.values(pctMap), 0.001);
 
+  function getColor(pct) {
+    return d3.interpolateRgb('#ede9e2', col)(pct / maxPct);
+  }
+
+  const isoToExio = {};
+  Object.entries(EXIO_TO_ISO).forEach(([exio, iso]) => { isoToExio[iso] = exio; });
+
+  const rowPct = {};
+  Object.entries(ROW_ISO_CLEAN).forEach(([rowCode, isoList]) => {
+    if (pctMap[rowCode]) isoList.forEach(iso => { rowPct[iso] = pctMap[rowCode] / isoList.length; });
+  });
+
   const projection = d3.geoNaturalEarth1().scale(W / 6.5).translate([W / 2, H / 2]);
   const pathGen    = d3.geoPath(projection);
 
-  // Land is rendered as a single merged shape — no country borders shown at all
+  // Single merged land mass — no borders at all
   const landFeature = topojson.merge(topo, topo.objects.countries.geometries
-    .filter(g => +g.id !== 10)); // exclude Antarctica
+    .filter(g => +g.id !== 10));
 
-  const producingISO    = EXIO_TO_ISO[S.country];
-  const allFeatures     = topojson.feature(topo, topo.objects.countries).features;
+  const allFeatures      = topojson.feature(topo, topo.objects.countries).features;
+  const producingISO     = EXIO_TO_ISO[S.country];
   const producingFeature = allFeatures.find(f => +f.id === producingISO);
   const producingCentroid = producingFeature
     ? pathGen.centroid(producingFeature)
@@ -1340,7 +1352,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
   svg.selectAll('*').remove();
   svg.attr('viewBox', `0 0 ${W} ${H}`);
 
-  // Arrow marker def
+  // Arrow marker
   svg.append('defs').append('marker')
     .attr('id', `arr-${side}`)
     .attr('viewBox', '0 0 10 10').attr('refX', 8).attr('refY', 5)
@@ -1349,24 +1361,25 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     .attr('fill', 'none').attr('stroke', col)
     .attr('stroke-width', 1.5).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
 
-  // Graticule (very subtle)
+  // Graticule
   svg.append('path').datum(d3.geoGraticule()()).attr('d', pathGen)
     .attr('fill', 'none').attr('stroke', 'var(--border)').attr('stroke-width', 0.2);
 
-  // Single land mass — no borders
+  // Land mass
   svg.append('path').datum(landFeature).attr('d', pathGen)
     .attr('fill', 'var(--bg2)').attr('stroke', 'none');
 
-  // ── Flow arrows ──────────────────────────────────────────────
+  // ── Flow arrows (including domestic self-flows) ──────────────
   const sortedFlows = Object.entries(pctMap)
-    .filter(([code]) => code !== S.country)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 12);
+    .slice(0, 14);
 
   const arrowLayer = svg.append('g');
+  const dotLayer   = svg.append('g');
 
   if (producingCentroid) {
-    sortedFlows.forEach(([code, pct]) => {
+    sortedFlows.forEach(([code, pct], i) => {
+      const isDomestic = (code === S.country);
       const lonlat = COUNTRY_CENTROIDS[code];
       if (!lonlat) return;
       const targetPt = projection(lonlat);
@@ -1375,104 +1388,100 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
       const [px, py] = producingCentroid;
       const [tx, ty] = targetPt;
 
-      // Curved control point
-      const mx = (px + tx) / 2, my = (py + ty) / 2;
-      const dx = tx - px, dy = ty - py;
-      const len = Math.sqrt(dx*dx + dy*dy) || 1;
-      const off = Math.min(len * 0.18, 35);
-      const cpx = mx - (dy / len) * off;
-      const cpy = my + (dx / len) * off;
+      // Draw arrow only for non-domestic flows
+      if (!isDomestic) {
+        const mx = (px + tx) / 2, my = (py + ty) / 2;
+        const dx = tx - px, dy = ty - py;
+        const len = Math.sqrt(dx*dx + dy*dy) || 1;
+        const off = Math.min(len * 0.18, 35);
+        const cpx = mx - (dy / len) * off;
+        const cpy = my + (dx / len) * off;
 
-      // Direction: inward for upstream, outward for downstream
-      let ax1 = side === 'up' ? tx : px;
-      let ay1 = side === 'up' ? ty : py;
-      let ax2 = side === 'up' ? px : tx;
-      let ay2 = side === 'up' ? py : ty;
+        let ax1 = side === 'up' ? tx : px;
+        let ay1 = side === 'up' ? ty : py;
+        let ax2 = side === 'up' ? px : tx;
+        let ay2 = side === 'up' ? py : ty;
 
-      // Shorten so arrow tip doesn't overlap the dot
-      const shorten = 10;
-      const adx = ax2 - ax1, ady = ay2 - ay1;
-      const alen = Math.sqrt(adx*adx + ady*ady) || 1;
-      const sx1 = ax1 + (adx/alen)*shorten;
-      const sy1 = ay1 + (ady/alen)*shorten;
-      const sx2 = ax2 - (adx/alen)*shorten;
-      const sy2 = ay2 - (ady/alen)*shorten;
+        const shorten = 10;
+        const adx = ax2 - ax1, ady = ay2 - ay1;
+        const alen = Math.sqrt(adx*adx + ady*ady) || 1;
+        const sx1 = ax1 + (adx/alen)*shorten;
+        const sy1 = ay1 + (ady/alen)*shorten;
+        const sx2 = ax2 - (adx/alen)*shorten;
+        const sy2 = ay2 - (ady/alen)*shorten;
 
-      const sw = Math.max(1.2, pct / maxPct * 7);
+        const sw = Math.max(1.2, pct / maxPct * 7);
 
-      arrowLayer.append('path')
-        .attr('d', `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`)
-        .attr('fill', 'none').attr('stroke', col)
-        .attr('stroke-width', sw).attr('stroke-opacity', 0.5)
-        .attr('marker-end', `url(#arr-${side})`);
+        arrowLayer.append('path')
+          .attr('d', `M${sx1},${sy1} Q${cpx},${cpy} ${sx2},${sy2}`)
+          .attr('fill', 'none').attr('stroke', col)
+          .attr('stroke-width', sw).attr('stroke-opacity', 0.5)
+          .attr('marker-end', `url(#arr-${side})`);
+      }
+
+      // Draw dot for all flows including domestic
+      const r = isDomestic
+        ? Math.max(5, pct / maxPct * 12)  // larger dot for domestic
+        : Math.max(3, pct / maxPct * 10);
+      const opacity = 0.4 + pct / maxPct * 0.6;
+      const dotCol  = isDomestic ? col : col;
+      const strokeW = isDomestic ? 2 : 1;
+
+      dotLayer.append('circle')
+        .attr('cx', tx).attr('cy', ty).attr('r', r)
+        .attr('fill', dotCol).attr('fill-opacity', opacity)
+        .attr('stroke', 'var(--bg)').attr('stroke-width', strokeW)
+        .style('cursor', 'pointer')
+        .on('mousemove', event => {
+          const name = getCountryName(code) || code;
+          const val  = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
+          const tt   = document.getElementById('map-tooltip');
+          document.getElementById('map-tt-title').textContent =
+            name + (isDomestic ? ' (domestic)' : '');
+          document.getElementById('map-tt-val').textContent =
+            `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}`;
+          tt.style.left = (event.clientX + 12) + 'px';
+          tt.style.top  = (event.clientY - 10) + 'px';
+          tt.classList.add('show');
+        })
+        .on('mouseleave', () => document.getElementById('map-tooltip').classList.remove('show'));
+
+      // Label for top 6 flows
+      if (i < 6) {
+        const name = getCountryName(code) || code;
+        // Use short name for long country names; use code for RoW
+        const isRow = ['WA','WE','WL','WM','WF'].includes(code);
+        const ROW_LABELS = { WA:'Rest of Africa', WE:'Rest of Europe', WL:'Rest of Americas', WM:'Rest of Middle East & Asia', WF:'Rest of Asia-Pacific' };
+        const label = isRow ? ROW_LABELS[code] : (name.length > 14 ? code : name);
+        dotLayer.append('text')
+          .attr('x', tx).attr('y', ty - r - 3)
+          .attr('text-anchor', 'middle').attr('font-size', isRow ? '6.5' : '7')
+          .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
+          .attr('pointer-events', 'none')
+          .text(label);
+      }
     });
   }
 
-  // ── Country dots (origins/destinations) ─────────────────────
-  // Draw a filled circle at each country centroid, sized by share
-  const dotLayer = svg.append('g');
-
-  sortedFlows.forEach(([code, pct], i) => {
-    const lonlat = COUNTRY_CENTROIDS[code];
-    if (!lonlat) return;
-    const pt = projection(lonlat);
-    if (!pt) return;
-
-    const r = Math.max(3, pct / maxPct * 10);
-    const opacity = 0.4 + pct / maxPct * 0.6;
-
-    dotLayer.append('circle')
-      .attr('cx', pt[0]).attr('cy', pt[1]).attr('r', r)
-      .attr('fill', col).attr('fill-opacity', opacity)
-      .attr('stroke', 'var(--bg)').attr('stroke-width', 1)
-      .style('cursor', 'pointer')
-      .on('mousemove', event => {
-        const name = getCountryName(code) || code;
-        const val  = (byCountry[code] || 0) / (DISPLAY[S.indicator]?.div || 1);
-        const tt   = document.getElementById('map-tooltip');
-        document.getElementById('map-tt-title').textContent = name;
-        document.getElementById('map-tt-val').textContent   =
-          `${(pct*100).toFixed(1)}%  ·  ${fmtVal(val)} ${displayUnit(S.indicator)}`;
-        tt.style.left = (event.clientX + 12) + 'px';
-        tt.style.top  = (event.clientY - 10) + 'px';
-        tt.classList.add('show');
-      })
-      .on('mouseleave', () => document.getElementById('map-tooltip').classList.remove('show'));
-
-    // Country label for top 5 flows
-    if (i < 5) {
-      const name = getCountryName(code) || code;
-      const shortName = name.length > 12 ? code : name;
-      dotLayer.append('text')
-        .attr('x', pt[0]).attr('y', pt[1] - r - 3)
-        .attr('text-anchor', 'middle').attr('font-size', '7')
-        .attr('font-family', 'var(--font-mono)').attr('fill', 'var(--ink2)')
-        .attr('pointer-events', 'none')
-        .text(shortName);
-    }
-  });
+  // ── RoW region labels (always shown if in top flows) ─────────
+  // Already handled above in the dot loop
 
   // ── Producing country dot ────────────────────────────────────
   if (producingCentroid) {
-    // Pulse ring
     svg.append('circle')
       .attr('cx', producingCentroid[0]).attr('cy', producingCentroid[1])
       .attr('r', 10).attr('fill', 'none')
       .attr('stroke', col).attr('stroke-width', 1.5).attr('stroke-opacity', 0.4);
-    // Solid dot
     svg.append('circle')
       .attr('cx', producingCentroid[0]).attr('cy', producingCentroid[1])
       .attr('r', 6).attr('fill', col)
       .attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
-    // Label
-    const pName = getCountryName(S.country) || S.country;
     svg.append('text')
-      .attr('x', producingCentroid[0])
-      .attr('y', producingCentroid[1] - 14)
+      .attr('x', producingCentroid[0]).attr('y', producingCentroid[1] - 14)
       .attr('text-anchor', 'middle').attr('font-size', '8')
       .attr('font-family', 'var(--font-mono)').attr('font-weight', '500')
       .attr('fill', col).attr('pointer-events', 'none')
-      .text(pName);
+      .text(getCountryName(S.country) || S.country);
   }
 
   // UN disclaimer
@@ -1487,7 +1496,7 @@ function drawHalfMap(side, flows, ctryKey, col, topo) {
     lc.width = lc.offsetWidth || 160; lc.height = 6;
     const ctx = lc.getContext('2d');
     const grd = ctx.createLinearGradient(0, 0, lc.width, 0);
-    grd.addColorStop(0, 'var(--bg2)'); grd.addColorStop(1, col);
+    grd.addColorStop(0, '#ede9e2'); grd.addColorStop(1, col);
     ctx.fillStyle = grd; ctx.fillRect(0, 0, lc.width, 6);
     document.getElementById(`map-${side}-legend-max`).textContent = `${(maxPct*100).toFixed(1)}%`;
   }
