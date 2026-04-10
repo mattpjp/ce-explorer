@@ -152,11 +152,11 @@ select:focus { outline: none; border-color: var(--ink); }
 
 /* ── SECTOR TABS ─────────────────────────────────────────────── */
 .sector-bar {
-  display: flex; gap: 4px; flex-wrap: nowrap;
-  padding: 8px 20px;
+  display: flex; gap: 4px; flex-wrap: wrap;
+  padding: 6px 20px;
   border-bottom: 1px solid var(--border);
-  align-items: center;
-  overflow-x: auto;
+  align-items: stretch;
+  overflow-x: visible;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -171,6 +171,8 @@ select:focus { outline: none; border-color: var(--ink); }
   border: 1px solid var(--border); border-radius: 4px;
   cursor: pointer; background: transparent; color: var(--ink2);
   transition: all 0.1s;
+  flex: 1 1 0; text-align: center; white-space: normal;
+  min-width: 72px; max-width: 120px;
 }
 .sec-btn:hover { background: var(--bg2); border-color: var(--border2); }
 .sec-btn.on {
@@ -548,7 +550,7 @@ select:focus { outline: none; border-color: var(--ink); }
       <div class="col-panel-header">
         <span class="col-hdr-title">Upstream suppliers</span>
         <div class="view-tog">
-          <button class="vt on" data-side="left" data-v="mixed" onclick="setView('left','mixed',this)">top</button>
+          <button class="vt on" data-side="left" data-v="mixed" onclick="setView('left','mixed',this)">Country &amp; sector</button>
           <button class="vt" data-side="left" data-v="country" onclick="setView('left','country',this)">country</button>
           <button class="vt" data-side="left" data-v="sector" onclick="setView('left','sector',this)">sector</button>
         </div>
@@ -582,7 +584,7 @@ select:focus { outline: none; border-color: var(--ink); }
       <div class="col-panel-header">
         <span class="col-hdr-title">Downstream buyers</span>
         <div class="view-tog">
-          <button class="vt on" data-side="right" data-v="mixed" onclick="setView('right','mixed',this)">top</button>
+          <button class="vt on" data-side="right" data-v="mixed" onclick="setView('right','mixed',this)">Country &amp; sector</button>
           <button class="vt" data-side="right" data-v="country" onclick="setView('right','country',this)">country</button>
           <button class="vt" data-side="right" data-v="sector" onclick="setView('right','sector',this)">sector</button>
         </div>
